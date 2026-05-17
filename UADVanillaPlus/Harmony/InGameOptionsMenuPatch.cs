@@ -29,10 +29,11 @@ internal static class InGameOptionsMenuPatch
     private const string BattleWeatherOptionName = "UADVP_Option_BattleWeather";
     private const string BattleSpottingRangeOptionName = "UADVP_Option_BattleSpottingRange";
     private const string BattleDamageOptionName = "UADVP_Option_BattleDamage";
+    private const string RealisticShellDamageOptionName = "UADVP_Option_RealisticShellDamage";
     private const string DesignAccuracyPenaltiesOptionName = "UADVP_Option_DesignAccuracyPenalties";
     private const string PortStrikeOptionName = "UADVP_Option_PortStrike";
     private const string AiFleetCompositionOptionName = "UADVP_Option_AiFleetComposition";
-    private const string AiArmsRaceOptionName = "UADVP_Option_AiArmsRace";
+    private const string AdvancedAiBuilderOptionName = "UADVP_Option_AdvancedAiBuilder";
     private const string SharedDesignsUsageOptionName = "UADVP_Option_SharedDesignsUsage";
     private const string MajorShipTorpedoesOptionName = "UADVP_Option_MajorShipTorpedoes";
     private const string ObsoleteDesignRetentionOptionName = "UADVP_Option_ObsoleteDesignRetention";
@@ -45,6 +46,7 @@ internal static class InGameOptionsMenuPatch
     private const string MineWarfareOptionName = "UADVP_Option_MineWarfare";
     private const string SubmarineWarfareOptionName = "UADVP_Option_SubmarineWarfare";
     private const string ExperimentalNationShipPaintsOptionName = "UADVP_Option_ExperimentalNationShipPaints";
+    private const string BattleRuntimeDiagnosticsOptionName = "UADVP_Option_BattleRuntimeDiagnostics";
     private const string NationShipPaintsSectionName = "UADVP_Option_NationShipPaints";
 
     private static readonly Color Background = new(0f, 0f, 0f, 0.94f);
@@ -314,9 +316,17 @@ internal static class InGameOptionsMenuPatch
                     ("5x", ModSettings.BattleDamage == ModSettings.BattleDamageMode.X5, () => SetBattleDamageMode(ModSettings.BattleDamageMode.X5)));
                 AddSegmentedOption(
                     pane.transform,
+                    RealisticShellDamageOptionName,
+                    "Realistic Shell Damage",
+                    "Realistic makes gun direct damage scale cubically with caliber, anchored at vanilla 12-inch shell damage. This reduces excessive small-gun structure damage and trims very-large-gun spikes. Battle Damage remains a separate global multiplier.",
+                    true,
+                    ("Realistic", ModSettings.RealisticShellDamage == ModSettings.RealisticShellDamageMode.Realistic, () => SetRealisticShellDamageMode(ModSettings.RealisticShellDamageMode.Realistic)),
+                    ("Vanilla", ModSettings.RealisticShellDamage == ModSettings.RealisticShellDamageMode.Vanilla, () => SetRealisticShellDamageMode(ModSettings.RealisticShellDamageMode.Vanilla)));
+                AddSegmentedOption(
+                    pane.transform,
                     DesignAccuracyPenaltiesOptionName,
                     "Crew & Accuracy Balance",
-                    "Flattens extreme battle accuracy swings from design-side smoke/stability/instability penalties and crew-training Accuracy, Aiming, Reload, and Damage Control bonuses or penalties. /5 pulls affected curves five times closer to neutral. Vanilla keeps the game's original values. Changing this option is disabled while a battle is loading or active.",
+                    "Flattens extreme crew, design, and damage-state accuracy swings, including damaged fire control/conning tower and flooding/damage instability. Does not change base damage or positioning. Changing this option is disabled while a battle is loading or active.",
                     CanChangeAccuracyPenalties(),
                     ("/10", ModSettings.DesignAccuracyPenaltyMode == ModSettings.AccuracyPenaltyMode.Div10, () => SetDesignAccuracyPenaltiesMode(ModSettings.AccuracyPenaltyMode.Div10)),
                     ("/5", ModSettings.DesignAccuracyPenaltyMode == ModSettings.AccuracyPenaltyMode.Div5, () => SetDesignAccuracyPenaltiesMode(ModSettings.AccuracyPenaltyMode.Div5)),
@@ -343,14 +353,12 @@ internal static class InGameOptionsMenuPatch
                     ("Heavy", ModSettings.AiFleetComposition == ModSettings.AiFleetCompositionMode.Heavy, () => SetAiFleetCompositionMode(ModSettings.AiFleetCompositionMode.Heavy)));
                 AddSegmentedOption(
                     pane.transform,
-                    AiArmsRaceOptionName,
-                    "AI Arms Race",
-                    "Compares AI designs against current world benchmarks and blocks or replaces designs below the selected competitiveness threshold.",
+                    AdvancedAiBuilderOptionName,
+                    "Advanced AI Builder",
+                    "Enhanced lets VP help AI design books with shared-design blueprint adaptation, missing-type recovery, and stale-design refreshes. Vanilla keeps the game's original design-generation cadence and exact shared-design checks.",
                     true,
-                    ("Disabled", ModSettings.AiArmsRace == ModSettings.AiArmsRaceMode.Disabled, () => SetAiArmsRaceMode(ModSettings.AiArmsRaceMode.Disabled)),
-                    ("35%", ModSettings.AiArmsRace == ModSettings.AiArmsRaceMode.Loose35, () => SetAiArmsRaceMode(ModSettings.AiArmsRaceMode.Loose35)),
-                    ("60%", ModSettings.AiArmsRace == ModSettings.AiArmsRaceMode.Standard60, () => SetAiArmsRaceMode(ModSettings.AiArmsRaceMode.Standard60)),
-                    ("75%", ModSettings.AiArmsRace == ModSettings.AiArmsRaceMode.Strict75, () => SetAiArmsRaceMode(ModSettings.AiArmsRaceMode.Strict75)));
+                    ("Enhanced", ModSettings.AdvancedAiBuilderEnabled, () => SetAdvancedAiBuilderMode(true)),
+                    ("Vanilla", !ModSettings.AdvancedAiBuilderEnabled, () => SetAdvancedAiBuilderMode(false)));
                 AddSegmentedOption(
                     pane.transform,
                     SharedDesignsUsageOptionName,
@@ -455,6 +463,14 @@ internal static class InGameOptionsMenuPatch
                     true,
                     ("Off", !ModSettings.ExperimentalNationShipPaintsEnabled, () => SetExperimentalNationShipPaintsMode(false)),
                     ("On", ModSettings.ExperimentalNationShipPaintsEnabled, () => SetExperimentalNationShipPaintsMode(true)));
+                AddSegmentedOption(
+                    pane.transform,
+                    BattleRuntimeDiagnosticsOptionName,
+                    "Battle Runtime Diagnostics",
+                    "On logs temporary battle-exit summaries for aim uptime, target churn, maneuvering, and weapon output. This is enabled for current balance investigation builds and should be disabled before release.",
+                    true,
+                    ("On", ModSettings.BattleRuntimeDiagnosticsEnabled, () => SetBattleRuntimeDiagnosticsMode(true)),
+                    ("Off", !ModSettings.BattleRuntimeDiagnosticsEnabled, () => SetBattleRuntimeDiagnosticsMode(false)));
                 break;
             case Section.NationShipPaints:
                 BuildNationShipPaintsPane(pane.transform);
@@ -672,6 +688,15 @@ internal static class InGameOptionsMenuPatch
         RefreshLauncherButton();
     }
 
+    private static void SetRealisticShellDamageMode(ModSettings.RealisticShellDamageMode mode)
+    {
+        if (ModSettings.RealisticShellDamage != mode)
+            ModSettings.RealisticShellDamage = mode;
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
     private static void SetDesignAccuracyPenaltiesMode(ModSettings.AccuracyPenaltyMode mode)
     {
         if (!CanChangeAccuracyPenalties())
@@ -713,10 +738,10 @@ internal static class InGameOptionsMenuPatch
         RefreshLauncherButton();
     }
 
-    private static void SetAiArmsRaceMode(ModSettings.AiArmsRaceMode mode)
+    private static void SetAdvancedAiBuilderMode(bool enabled)
     {
-        if (ModSettings.AiArmsRace != mode)
-            ModSettings.AiArmsRace = mode;
+        if (ModSettings.AdvancedAiBuilderEnabled != enabled)
+            ModSettings.AdvancedAiBuilderEnabled = enabled;
 
         RefreshMenu();
         RefreshLauncherButton();
@@ -798,6 +823,15 @@ internal static class InGameOptionsMenuPatch
             selectedSection = Section.NationShipPaints;
         else if (selectedSection == Section.NationShipPaints)
             selectedSection = Section.Experimental;
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
+    private static void SetBattleRuntimeDiagnosticsMode(bool enabled)
+    {
+        if (ModSettings.BattleRuntimeDiagnosticsEnabled != enabled)
+            ModSettings.BattleRuntimeDiagnosticsEnabled = enabled;
 
         RefreshMenu();
         RefreshLauncherButton();
@@ -1007,7 +1041,7 @@ internal static class InGameOptionsMenuPatch
     }
 
     private static bool AnyBalanceOptionEnabled()
-        => ModSettings.BattleWeatherAlwaysSunny || ModSettings.BattleSpottingRange != ModSettings.BattleSpottingRangeMode.Vanilla || ModSettings.BattleDamage != ModSettings.BattleDamageMode.Vanilla || ModSettings.DesignAccuracyPenaltiesBalanced || ModSettings.PortStrikeBalanced || ModSettings.AiFleetComposition != ModSettings.AiFleetCompositionMode.Vanilla || ModSettings.AiArmsRaceEnabled || ModSettings.MajorShipTorpedoesRestricted || ModSettings.ObsoleteDesignRetentionEnabled || ModSettings.SuperstructureRefitsEnabled || ModSettings.ShipyardCapacityBalanced || ModSettings.EarlyCanalOpeningsEnabled || ModSettings.TechnologySpread != ModSettings.TechnologySpreadMode.Vanilla || !ModSettings.CampaignEndDateEnabled || ModSettings.MineWarfareDisabled || ModSettings.SubmarineWarfareDisabled || ModSettings.CampaignMapWraparoundEnabled || ModSettings.ExperimentalNationShipPaintsEnabled;
+        => ModSettings.BattleWeatherAlwaysSunny || ModSettings.BattleSpottingRange != ModSettings.BattleSpottingRangeMode.Vanilla || ModSettings.BattleDamage != ModSettings.BattleDamageMode.Vanilla || ModSettings.RealisticShellDamageEnabled || ModSettings.DesignAccuracyPenaltiesBalanced || ModSettings.PortStrikeBalanced || ModSettings.AiFleetComposition != ModSettings.AiFleetCompositionMode.Vanilla || ModSettings.AdvancedAiBuilderEnabled || ModSettings.MajorShipTorpedoesRestricted || ModSettings.ObsoleteDesignRetentionEnabled || ModSettings.SuperstructureRefitsEnabled || ModSettings.ShipyardCapacityBalanced || ModSettings.EarlyCanalOpeningsEnabled || ModSettings.TechnologySpread != ModSettings.TechnologySpreadMode.Vanilla || !ModSettings.CampaignEndDateEnabled || ModSettings.MineWarfareDisabled || ModSettings.SubmarineWarfareDisabled || ModSettings.CampaignMapWraparoundEnabled || ModSettings.ExperimentalNationShipPaintsEnabled;
 
     private static void AddLauncherTooltip(GameObject buttonObject)
         => AddTooltip(
@@ -1016,7 +1050,7 @@ internal static class InGameOptionsMenuPatch
             () => launcherButton != null && launcherButton.interactable);
 
     private static string LauncherTooltipText()
-        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAI Arms Race: {AiArmsRaceModeText(ModSettings.AiArmsRace)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}";
+        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nRealistic Shell Damage: {RealisticShellDamageModeText(ModSettings.RealisticShellDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAdvanced AI Builder: {AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}\nBattle Runtime Diagnostics: {BattleRuntimeDiagnosticsModeText(ModSettings.BattleRuntimeDiagnosticsEnabled)}";
 
     private static void AddTooltip(GameObject target, string text, Func<bool>? canShow = null)
         => AddTooltip(target, () => text, canShow);
@@ -1182,8 +1216,8 @@ internal static class InGameOptionsMenuPatch
     private static string AiFleetCompositionModeText(ModSettings.AiFleetCompositionMode mode)
         => ModSettings.AiFleetCompositionModeText(mode);
 
-    private static string AiArmsRaceModeText(ModSettings.AiArmsRaceMode mode)
-        => ModSettings.AiArmsRaceModeText(mode);
+    private static string AdvancedAiBuilderModeText(bool enabled)
+        => ModSettings.AdvancedAiBuilderModeText(enabled);
 
     private static string DesignAccuracyPenaltiesModeText(ModSettings.AccuracyPenaltyMode mode)
         => ModSettings.AccuracyPenaltyModeText(mode);
@@ -1193,6 +1227,9 @@ internal static class InGameOptionsMenuPatch
 
     private static string BattleDamageModeText(ModSettings.BattleDamageMode mode)
         => ModSettings.BattleDamageModeText(mode);
+
+    private static string RealisticShellDamageModeText(ModSettings.RealisticShellDamageMode mode)
+        => ModSettings.RealisticShellDamageModeText(mode);
 
     private static string MajorShipTorpedoesModeText(bool restricted)
         => restricted ? "Disallowed" : "Vanilla";
@@ -1226,6 +1263,9 @@ internal static class InGameOptionsMenuPatch
 
     private static string ExperimentalNationShipPaintsModeText(bool enabled)
         => ModSettings.ExperimentalNationShipPaintsModeText(enabled);
+
+    private static string BattleRuntimeDiagnosticsModeText(bool enabled)
+        => ModSettings.BattleRuntimeDiagnosticsModeText(enabled);
 
     private static void SetMenuButtonText(GameObject buttonObject, string text)
     {

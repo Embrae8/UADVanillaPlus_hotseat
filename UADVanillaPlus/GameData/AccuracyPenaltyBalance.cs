@@ -2,6 +2,7 @@ using System.Globalization;
 using System.Text.RegularExpressions;
 using Il2Cpp;
 using MelonLoader;
+using UadGameData = Il2Cpp.GameData;
 
 namespace UADVanillaPlus.GameData;
 
@@ -13,6 +14,7 @@ internal static class AccuracyPenaltyBalance
 {
     private sealed record AccuracyCurve(string EffectName, float First, float Second);
     private sealed record CrewTrainingCurve(float Accuracy, float Aiming, float Reload, float DamageControl);
+    private sealed record DamageStateParam(string Name, bool IsMultiplierTowardOne);
 
     private static readonly Dictionary<string, AccuracyCurve> VanillaAccuracyCurves = new(StringComparer.Ordinal)
     {
@@ -31,9 +33,29 @@ internal static class AccuracyPenaltyBalance
     private static readonly HashSet<string> LoggedStats = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, string> OriginalEffectText = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, CrewTrainingCurve> OriginalCrewTrainingCurves = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, float> OriginalDamageStateParams = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> LoggedMissingDamageStateParams = new(StringComparer.Ordinal);
+    private static readonly DamageStateParam[] DamageStateAccuracyParams =
+    {
+        new("conning_tower_damage_acc_loss", true),
+        new("fire_control_damage_acc_loss", true),
+        new("acc_instab_flooding", false),
+        new("acc_instab_damage", false),
+    };
+
+    private static readonly string[] DamageStateUnchangedParams =
+    {
+        "instability_damage_ratio",
+        "instability_damage_decrease",
+    };
+
     private static ModSettings.AccuracyPenaltyMode? lastAppliedCrewMode;
+    private static ModSettings.AccuracyPenaltyMode? lastAppliedDamageStateMode;
     private static string? lastAppliedCrewSummary;
+    private static string? lastAppliedDamageStateSummary;
     private static bool loggedMissingCrewTrainingLevels;
+    private static bool loggedMissingDamageStateGameData;
+    private static bool loggedDeferredDamageStateInBattle;
 
     internal static void PrepareStatForVanillaPostProcess(StatData stat)
     {
@@ -127,6 +149,86 @@ internal static class AccuracyPenaltyBalance
         Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP crew & accuracy balance: applied {summary} during {reason}.");
     }
 
+    internal static void ApplyLoadedDamageStateParams(
+        ModSettings.AccuracyPenaltyMode mode,
+        string reason,
+        UadGameData? gameDataOverride = null,
+        bool allowDuringBattleTransition = false)
+    {
+        if (!allowDuringBattleTransition && IsBattleOrLoading())
+        {
+            if (!loggedDeferredDamageStateInBattle)
+            {
+                loggedDeferredDamageStateInBattle = true;
+                Melon<UADVanillaPlusMod>.Logger.Warning(
+                    "UADVP crew & accuracy balance: damage-state param reapply deferred because a battle is loading or active.");
+            }
+
+            return;
+        }
+
+        UadGameData? gameData = gameDataOverride ?? G.GameData;
+        if (gameData?.paramsRaw == null && gameData?.parms == null)
+        {
+            if (!loggedMissingDamageStateGameData)
+            {
+                loggedMissingDamageStateGameData = true;
+                Melon<UADVanillaPlusMod>.Logger.Warning(
+                    "UADVP crew & accuracy balance: damage-state params are not loaded yet.");
+            }
+
+            return;
+        }
+
+        loggedMissingDamageStateGameData = false;
+        loggedDeferredDamageStateInBattle = false;
+
+        CaptureOriginalDamageStateParams(gameData);
+        float divisor = DamageStateAccuracyDivisor(mode);
+        List<string> summaryParts = new();
+
+        foreach (DamageStateParam param in DamageStateAccuracyParams)
+        {
+            if (!OriginalDamageStateParams.TryGetValue(param.Name, out float original))
+            {
+                LogMissingDamageStateParam(param.Name);
+                continue;
+            }
+
+            float balanced = param.IsMultiplierTowardOne
+                ? FlattenMultiplier(original, divisor)
+                : original / divisor;
+
+            bool wroteRaw = TryWriteRawParam(gameData, param.Name, balanced);
+            bool wroteParsed = TryWriteParsedParam(gameData, param.Name, balanced);
+            summaryParts.Add($"{param.Name} {Format(original)}->{Format(balanced)} ({WriteTargetText(wroteRaw, wroteParsed)})");
+        }
+
+        foreach (string paramName in DamageStateUnchangedParams)
+        {
+            if (TryReadRawParam(gameData, paramName, out float unchanged) ||
+                TryReadParsedParam(gameData, paramName, out unchanged))
+            {
+                summaryParts.Add($"{paramName} unchanged={Format(unchanged)}");
+            }
+        }
+
+        if (summaryParts.Count == 0)
+            return;
+
+        string summary = string.Join("; ", summaryParts);
+        if (lastAppliedDamageStateMode == mode && string.Equals(lastAppliedDamageStateSummary, summary, StringComparison.Ordinal))
+            return;
+
+        lastAppliedDamageStateMode = mode;
+        lastAppliedDamageStateSummary = summary;
+        string modeText = mode == ModSettings.AccuracyPenaltyMode.Vanilla
+            ? "Vanilla"
+            : $"{ModSettings.AccuracyPenaltyModeText(mode)}-softened";
+        Melon<UADVanillaPlusMod>.Logger.Msg(
+            $"UADVP crew & accuracy balance: damage-state params {modeText} during {reason}; {summary}.");
+    }
+
     internal static void TryReapplyLoadedStats(ModSettings.AccuracyPenaltyMode mode)
     {
         if (IsBattleOrLoading())
@@ -168,6 +270,7 @@ internal static class AccuracyPenaltyBalance
         }
 
         ApplyLoadedCrewTrainingLevels(mode, "live option reapply");
+        ApplyLoadedDamageStateParams(mode, "live option reapply");
 
         Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP crew & accuracy balance: reapplied {ModSettings.AccuracyPenaltyModeText(mode)} mode to {rebuilt} loaded design stat curves{(missing > 0 ? $" ({missing} missing)" : string.Empty)}.");
     }
@@ -211,6 +314,15 @@ internal static class AccuracyPenaltyBalance
     private static float FlattenMultiplier(float value, float divisor)
         => 1f + ((value - 1f) / divisor);
 
+    private static float DamageStateAccuracyDivisor(ModSettings.AccuracyPenaltyMode mode)
+        => mode switch
+        {
+            ModSettings.AccuracyPenaltyMode.Div2 => MathF.Sqrt(2f),
+            ModSettings.AccuracyPenaltyMode.Div5 => 2f,
+            ModSettings.AccuracyPenaltyMode.Div10 => MathF.Sqrt(10f),
+            _ => 1f,
+        };
+
     private static string Format(float value)
         => value.ToString("0.###", CultureInfo.InvariantCulture);
 
@@ -227,6 +339,94 @@ internal static class AccuracyPenaltyBalance
                 continue;
 
             OriginalCrewTrainingCurves[key] = new CrewTrainingCurve(level.Accuracy, level.Aiming, level.Reload, level.DamageControl);
+        }
+    }
+
+    private static void CaptureOriginalDamageStateParams(UadGameData gameData)
+    {
+        foreach (DamageStateParam param in DamageStateAccuracyParams)
+        {
+            if (OriginalDamageStateParams.ContainsKey(param.Name))
+                continue;
+
+            if (TryReadRawParam(gameData, param.Name, out float rawValue) ||
+                TryReadParsedParam(gameData, param.Name, out rawValue))
+            {
+                OriginalDamageStateParams[param.Name] = rawValue;
+            }
+        }
+    }
+
+    private static bool TryReadRawParam(UadGameData gameData, string paramName, out float value)
+    {
+        value = 0f;
+        try
+        {
+            if (gameData.paramsRaw != null &&
+                gameData.paramsRaw.TryGetValue(paramName, out ParamData raw) &&
+                raw != null)
+            {
+                value = raw.value;
+                return true;
+            }
+        }
+        catch
+        {
+        }
+
+        return false;
+    }
+
+    private static bool TryReadParsedParam(UadGameData gameData, string paramName, out float value)
+    {
+        value = 0f;
+        try
+        {
+            return gameData.parms != null && gameData.parms.TryGetValue(paramName, out value);
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool TryWriteRawParam(UadGameData gameData, string paramName, float value)
+    {
+        try
+        {
+            if (gameData.paramsRaw == null ||
+                !gameData.paramsRaw.TryGetValue(paramName, out ParamData raw) ||
+                raw == null)
+            {
+                return false;
+            }
+
+            raw.value = value;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Warning(
+                $"UADVP crew & accuracy balance: failed to write raw damage-state param {paramName}. {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static bool TryWriteParsedParam(UadGameData gameData, string paramName, float value)
+    {
+        try
+        {
+            if (gameData.parms == null || !gameData.parms.ContainsKey(paramName))
+                return false;
+
+            gameData.parms[paramName] = value;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Warning(
+                $"UADVP crew & accuracy balance: failed to write parsed damage-state param {paramName}. {ex.GetType().Name}: {ex.Message}");
+            return false;
         }
     }
 
@@ -256,6 +456,21 @@ internal static class AccuracyPenaltyBalance
            $"aim {Format(original.Aiming)}->{Format(balanced.Aiming)} " +
            $"reload {Format(original.Reload)}->{Format(balanced.Reload)} " +
            $"dc {Format(original.DamageControl)}->{Format(balanced.DamageControl)}";
+
+    private static void LogMissingDamageStateParam(string paramName)
+    {
+        if (LoggedMissingDamageStateParams.Add(paramName))
+            Melon<UADVanillaPlusMod>.Logger.Warning($"UADVP crew & accuracy balance: missing loaded damage-state param {paramName}; cannot scale it.");
+    }
+
+    private static string WriteTargetText(bool wroteRaw, bool wroteParsed)
+        => (wroteRaw, wroteParsed) switch
+        {
+            (true, true) => "raw+parsed",
+            (true, false) => "raw",
+            (false, true) => "parsed",
+            _ => "not written",
+        };
 
     private static void LogOnce(string statName, string message)
     {

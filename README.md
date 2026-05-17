@@ -2,7 +2,7 @@
 
 UAD Vanilla Plus (`UAD:VP`) is a lightweight mod for Ultimate Admiral: Dreadnoughts that keeps the base game feel while adding small quality-of-life improvements.
 
-Current version: `0.5.97`
+Current version: `0.5.104`
 
 ## Philosophy
 
@@ -44,13 +44,13 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 - **Direct diplomacy politics actions**: add Declare War and Force Peace buttons with confirmation to campaign politics rows, with Force Peace using the vanilla reparation flow when war victory points produce a clear winner.
 - **In-game options menu**: control UAD:VP balance options from the top-right game UI.
 - **Shared design usage control**: change the active campaign's Shared Designs mode after campaign start so future AI design needs can use `Off`, `Selective`, or `Always` without starting a new campaign.
-- **Shared design import adaptation**: let AI shared-design imports safely downgrade armor quality, torpedo size, radio, rangefinder, steering, auxiliary-engine, and drive-shaft components, ignore safe stat-only tech baggage, and trim range or speed for slight tonnage near misses before final build validation.
+- **Shared design import adaptation**: in Advanced AI Builder's Enhanced mode, let AI shared-design imports safely downgrade armor quality, torpedo size, radio, rangefinder, steering, auxiliary-engine, and drive-shaft components, ignore safe stat-only tech baggage, and trim range or speed for slight tonnage near misses before final build validation.
 
 **Balance:**
 
 - **Port Strike balance**: scales transport losses from undefended port strikes by attacker tonnage instead of allowing small raiders to destroy large transport groups.
 - **AI Fleet Mix**: optional `Vanilla`, `Balanced`, and `Heavy` modes adjust AI surface-ship construction weights and, outside vanilla mode, favor the most under-target valid surface types. This defaults to `Heavy`.
-- **AI Arms Race**: optional `Disabled`, `35%`, `60%`, and `75%` modes block AI surface-ship designs and builds below the selected same-type world benchmark threshold, and nudge AI design generation toward weak surface-ship types. This defaults to `60%`.
+- **Advanced AI Builder**: default-on `Enhanced` mode lets VP help AI design books with shared-design blueprint adaptation, missing-type recovery, and stale-design refreshes; `Vanilla` keeps the game's original design-generation cadence and exact shared-design checks.
 - **Suspend Dock Overcapacity**: automatically delays lower-priority repairs, builds, and refits when monthly dock work exceeds shipyard capacity; manual mode keeps vanilla overcapacity handling.
 - **Canal openings**: optional setting to open the Panama and Kiel canals from 1890 when a campaign map loads, matching early-campaign canals such as Suez; historical mode keeps vanilla's 1914 and 1895 opening years.
 - **Technology Spread**: optional `Gradual`, `Swift`, and `Unrestricted` modes that help major nations catch up faster in research categories where they trail the current leader. `Historical` grants every major nation all normal technologies by historical year and disables research spending while leaving repeatable end-techs vanilla. This defaults to vanilla.
@@ -87,7 +87,8 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 
 - **Battle spotting range**: optional `Vanilla`, `3x`, `5x`, and `10x` modes multiply spotter-side spotting range for both player and AI ships. This defaults to `3x`.
 - **Battle Damage**: optional `Unchanged`, `2x`, `3x`, and `5x` modes multiply vanilla global gun and torpedo section-damage params for punchier battles. This defaults to `3x`.
-- **Crew & accuracy balance**: lets players flatten extreme smoke/stability/instability accuracy penalties and crew-training Accuracy, Aiming, Reload, and Damage Control swings.
+- **Realistic Shell Damage**: optional cubic gun damage curve anchored at vanilla 12-inch shell damage, reducing excessive small-gun structure damage and very-large-gun spikes while leaving shell weight, penetration, reload, range, and the Battle Damage multiplier untouched. This defaults to `Realistic`.
+- **Crew & accuracy balance**: lets players flatten extreme smoke/stability/instability accuracy penalties, crew-training Accuracy/Aiming/Reload/Damage Control swings, and damage-state accuracy penalties from damaged fire control, damaged conning towers, flooding instability, and damage instability.
 - **Battle weather balance**: optionally force daytime, clear skies, calm wind, and calm seas instead of random bad-weather rolls.
 
 ### Experimental

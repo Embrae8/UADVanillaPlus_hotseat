@@ -53,7 +53,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         ActiveAttempts.Push(context);
         CampaignAiDesignGenerationDiagnostics.RecordSharedAttempt(player, shipType);
         Log(
-            $"attempt nation={context.Nation} key={context.NationKey} type={context.Type} year={context.Year} prewarm={context.Prewarming.ToString().ToLowerInvariant()} sharedUsage={context.SharedUsage} designUsage={context.DesignUsage}.");
+            $"attempt nation={context.Nation} key={context.NationKey} type={context.Type} year={context.Year} prewarm={context.Prewarming.ToString().ToLowerInvariant()} advancedAiBuilder={AdvancedAiBuilderLabel()} sharedUsage={context.SharedUsage} designUsage={context.DesignUsage}.");
         return context;
     }
 
@@ -70,7 +70,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                 ? "none"
                 : context.SelectedDesign;
             Log(
-                $"{resultText} nation={context.Nation} type={context.Type} year={context.Year} selected={selected} reason={(result ? "shared design taken" : "no accepted shared design")}.");
+                $"{resultText} nation={context.Nation} type={context.Type} year={context.Year} advancedAiBuilder={AdvancedAiBuilderLabel()} selected={selected} reason={(result ? "shared design taken" : "no accepted shared design")}.");
         }
         finally
         {
@@ -95,7 +95,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
             existingDesigns ??= CaptureExistingSharedDesigns(player, shipType);
             CandidateSummary summary = AnalyzeCandidates(controller, player!, shipType, year, checkTech, isEarlySavedShip, existingDesigns);
             Log(
-                $"candidates nation={PlayerLabel(player)} key={NationKey(player)} type={NormalizeShipType(shipType)} year={year} window={SharedDesignWindowText()} order=yearDesc checkTech={checkTech.ToString().ToLowerInvariant()} earlySaved={isEarlySavedShip.ToString().ToLowerInvariant()} total={summary.Total} typeMatch={summary.TypeMatch} yearMatch={summary.YearMatch} fromStore={summary.FromStore} buildReject={summary.BuildReject} techReject={summary.TechReject} duplicateSkip={summary.DuplicateReject} accepted={summary.Accepted} buildReasons={summary.BuildReasonText()} rejectDetails={summary.RejectDetailText()} noCandidate={summary.NoCandidateReason()}.");
+                $"candidates nation={PlayerLabel(player)} key={NationKey(player)} type={NormalizeShipType(shipType)} year={year} window={SharedDesignWindowText()} order=yearDesc advancedAiBuilder={AdvancedAiBuilderLabel()} checkTech={checkTech.ToString().ToLowerInvariant()} earlySaved={isEarlySavedShip.ToString().ToLowerInvariant()} total={summary.Total} typeMatch={summary.TypeMatch} yearMatch={summary.YearMatch} fromStore={summary.FromStore} buildReject={summary.BuildReject} techReject={summary.TechReject} duplicateSkip={summary.DuplicateReject} accepted={summary.Accepted} buildReasons={summary.BuildReasonText()} rejectDetails={summary.RejectDetailText()} noCandidate={summary.NoCandidateReason()}.");
             if (checkTech && !isEarlySavedShip)
                 RecordSharedDesignGap(controller, player!, shipType, year, summary);
         }
@@ -267,7 +267,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         bool isEarlySavedShip,
         Ship? result)
     {
-        if (result == null || !checkTech || isEarlySavedShip || !ShouldTrace(player))
+        if (!ModSettings.AdvancedAiBuilderEnabled || result == null || !checkTech || isEarlySavedShip || !ShouldTrace(player))
             return;
 
         try
@@ -320,7 +320,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
 
         string selected = ShipSummary(result);
         Log(
-            $"result nation={PlayerLabel(player)} type={NormalizeShipType(shipType)} year={year} selected={selected}.");
+            $"result nation={PlayerLabel(player)} type={NormalizeShipType(shipType)} year={year} advancedAiBuilder={AdvancedAiBuilderLabel()} selected={selected}.");
 
         if (ActiveAttempts.Count <= 0)
             return;
@@ -364,7 +364,8 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         SharedDesignBookSnapshot? existingDesigns,
         ref Ship? result)
     {
-        if (!checkTech ||
+        if (!ModSettings.AdvancedAiBuilderEnabled ||
+            !checkTech ||
             isEarlySavedShip ||
             !ShouldTrace(player))
         {
@@ -436,10 +437,14 @@ internal static class CampaignSharedDesignDiagnosticsPatch
 
         try
         {
-            ApplySharedDesignOptionSanitizer(result, null, player!);
-            ApplySharedDesignSafeDowngrades(result, null, player!);
-            SanitizeSharedDesignTechs(result, null, player!);
-            ApplySharedDesignGunLengthClamp(result, null, player!);
+            if (ModSettings.AdvancedAiBuilderEnabled)
+            {
+                ApplySharedDesignOptionSanitizer(result, null, player!);
+                ApplySharedDesignSafeDowngrades(result, null, player!);
+                SanitizeSharedDesignTechs(result, null, player!);
+                ApplySharedDesignGunLengthClamp(result, null, player!);
+            }
+
             ApplyFinalSharedDesignTorpedoSanitizer(result, player!);
             MajorShipTorpedoCleanup.Audit(
                 result,
@@ -510,10 +515,13 @@ internal static class CampaignSharedDesignDiagnosticsPatch
 
                 summary.FromStore++;
                 TrySetInactive(ship);
-                ApplySharedDesignOptionSanitizer(ship, store, player);
-                ApplySharedDesignSafeDowngrades(ship, store, player);
-                SanitizeSharedDesignTechs(ship, store, player);
-                ApplySharedDesignGunLengthClamp(ship, store, player);
+                if (ModSettings.AdvancedAiBuilderEnabled)
+                {
+                    ApplySharedDesignOptionSanitizer(ship, store, player);
+                    ApplySharedDesignSafeDowngrades(ship, store, player);
+                    SanitizeSharedDesignTechs(ship, store, player);
+                    ApplySharedDesignGunLengthClamp(ship, store, player);
+                }
 
                 SharedDesignValidationResult validation = ValidateSharedDesignCandidate(
                     controller,
@@ -4104,6 +4112,9 @@ internal static class CampaignSharedDesignDiagnosticsPatch
 
     private static string DesignUsageLabel(CampaignController? controller)
         => SafeString(() => controller?.designsUsage.ToString());
+
+    private static string AdvancedAiBuilderLabel()
+        => ModSettings.AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled);
 
     private static string NormalizeReason(string? reason)
         => string.IsNullOrWhiteSpace(reason) ? "none" : reason.Trim().Replace(" ", string.Empty);

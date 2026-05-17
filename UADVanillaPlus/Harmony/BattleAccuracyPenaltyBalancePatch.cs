@@ -26,5 +26,6 @@ internal static class CrewTrainingAccuracyBalancePatch
     private static void PostfixPostProcessAll()
     {
         AccuracyPenaltyBalance.ApplyLoadedCrewTrainingLevels(ModSettings.DesignAccuracyPenaltyMode, "game data load");
+        AccuracyPenaltyBalance.ApplyLoadedDamageStateParams(ModSettings.DesignAccuracyPenaltyMode, "game data load");
     }
 }

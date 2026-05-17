@@ -10,11 +10,11 @@ internal static class ModSettings
 {
     private const string PortStrikeBalancedKey = "uadvp_port_strike_balanced";
     private const string AiFleetCompositionModeKey = "uadvp_ai_fleet_composition_mode";
-    private const string AiArmsRaceModeKey = "uadvp_ai_arms_race_mode";
-    private const string AiArmsRaceEnabledKey = "uadvp_ai_arms_race_enabled";
+    private const string AdvancedAiBuilderEnabledKey = "uadvp_advanced_ai_builder_enabled";
     private const string BattleWeatherAlwaysSunnyKey = "uadvp_battle_weather_always_sunny";
     private const string BattleSpottingRangeModeKey = "uadvp_battle_spotting_range_mode";
     private const string BattleDamageModeKey = "uadvp_battle_damage_mode";
+    private const string RealisticShellDamageModeKey = "uadvp_realistic_shell_damage_mode";
     private const string DesignAccuracyPenaltyModeKey = "uadvp_design_accuracy_penalty_mode";
     private const string MajorShipTorpedoesRestrictedKey = "uadvp_major_ship_torpedoes_restricted";
     private const string ObsoleteDesignRetentionEnabledKey = "uadvp_obsolete_design_retention_enabled";
@@ -27,15 +27,17 @@ internal static class ModSettings
     private const string TechnologySpreadModeKey = "uadvp_technology_spread_mode";
     private const string CampaignEndDateEnabledKey = "uadvp_campaign_end_date_enabled";
     private const string ExperimentalNationShipPaintsEnabledKey = "uadvp_experimental_nation_ship_paints_enabled";
+    private const string BattleRuntimeDiagnosticsEnabledKey = "uadvp_battle_runtime_diagnostics_enabled";
     private const string NationShipPaintStringKeyPrefix = "uadvp_nation_ship_paint_";
     private const string OldPanamaCanalEarlyEnabledKey = "uadvp_panama_canal_early_enabled";
 
     private static bool? portStrikeBalanced;
     private static AiFleetCompositionMode? aiFleetCompositionMode;
-    private static AiArmsRaceMode? aiArmsRaceMode;
+    private static bool? advancedAiBuilderEnabled;
     private static bool? battleWeatherAlwaysSunny;
     private static BattleSpottingRangeMode? battleSpottingRangeMode;
     private static BattleDamageMode? battleDamageMode;
+    private static RealisticShellDamageMode? realisticShellDamageMode;
     private static AccuracyPenaltyMode? designAccuracyPenaltyMode;
     private static bool? majorShipTorpedoesRestricted;
     private static bool? obsoleteDesignRetentionEnabled;
@@ -48,6 +50,7 @@ internal static class ModSettings
     private static TechnologySpreadMode? technologySpreadMode;
     private static bool? campaignEndDateEnabled;
     private static bool? experimentalNationShipPaintsEnabled;
+    private static bool? battleRuntimeDiagnosticsEnabled;
     private static int nationShipPaintsRevision;
 
     internal enum AccuracyPenaltyMode
@@ -72,6 +75,12 @@ internal static class ModSettings
         X2 = 2,
         X3 = 3,
         X5 = 5,
+    }
+
+    internal enum RealisticShellDamageMode
+    {
+        Vanilla = 0,
+        Realistic = 1,
     }
 
     internal enum AiFleetCompositionMode
@@ -126,22 +135,35 @@ internal static class ModSettings
 
     internal static AiArmsRaceMode AiArmsRace
     {
-        get => aiArmsRaceMode ??= LoadAiArmsRaceMode();
+        get => AiArmsRaceMode.Disabled;
         set
         {
-            aiArmsRaceMode = value;
-            PlayerPrefs.SetInt(AiArmsRaceModeKey, (int)value);
-            PlayerPrefs.SetInt(AiArmsRaceEnabledKey, value == AiArmsRaceMode.Disabled ? 0 : 1);
-            PlayerPrefs.Save();
-            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: AI Arms Race mode {AiArmsRaceModeText(value)}.");
-            LogCurrentSettings("after AI Arms Race change");
+            if (value != AiArmsRaceMode.Disabled)
+                Melon<UADVanillaPlusMod>.Logger.Msg("UADVP option: AI Arms Race is retired for now and remains Disabled.");
         }
     }
 
     internal static bool AiArmsRaceEnabled
     {
-        get => AiArmsRace != AiArmsRaceMode.Disabled;
-        set => AiArmsRace = value ? AiArmsRaceMode.Standard60 : AiArmsRaceMode.Disabled;
+        get => false;
+        set
+        {
+            if (value)
+                Melon<UADVanillaPlusMod>.Logger.Msg("UADVP option: AI Arms Race is retired for now and remains Disabled.");
+        }
+    }
+
+    internal static bool AdvancedAiBuilderEnabled
+    {
+        get => advancedAiBuilderEnabled ??= PlayerPrefs.GetInt(AdvancedAiBuilderEnabledKey, 1) != 0;
+        set
+        {
+            advancedAiBuilderEnabled = value;
+            PlayerPrefs.SetInt(AdvancedAiBuilderEnabledKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Advanced AI Builder mode {AdvancedAiBuilderModeText(value)}.");
+            LogCurrentSettings("after Advanced AI Builder change");
+        }
     }
 
     internal static bool BattleWeatherAlwaysSunny
@@ -214,6 +236,20 @@ internal static class ModSettings
             Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Battle Damage mode {BattleDamageModeText(value)}.");
             LogCurrentSettings("after Battle Damage change");
             BattleDamageBalance.ApplyCurrentSetting("option change");
+        }
+    }
+
+    internal static RealisticShellDamageMode RealisticShellDamage
+    {
+        get => realisticShellDamageMode ??= LoadRealisticShellDamageMode();
+        set
+        {
+            realisticShellDamageMode = value;
+            PlayerPrefs.SetInt(RealisticShellDamageModeKey, (int)value);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Realistic Shell Damage mode {RealisticShellDamageModeText(value)}.");
+            LogCurrentSettings("after Realistic Shell Damage change");
+            RealisticShellDamageBalance.ApplyCurrentSetting("option change");
         }
     }
 
@@ -347,6 +383,21 @@ internal static class ModSettings
         }
     }
 
+    // TODO release-disable: this temporary investigation diagnostic defaults on
+    // so current balance test builds emit battle-exit runtime summaries.
+    internal static bool BattleRuntimeDiagnosticsEnabled
+    {
+        get => battleRuntimeDiagnosticsEnabled ??= PlayerPrefs.GetInt(BattleRuntimeDiagnosticsEnabledKey, 1) != 0;
+        set
+        {
+            battleRuntimeDiagnosticsEnabled = value;
+            PlayerPrefs.SetInt(BattleRuntimeDiagnosticsEnabledKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Battle Runtime Diagnostics mode {BattleRuntimeDiagnosticsModeText(value)}.");
+            LogCurrentSettings("after Battle Runtime Diagnostics change");
+        }
+    }
+
     internal static int NationShipPaintsRevision => nationShipPaintsRevision;
 
     internal static string NationShipPaintString(string nationKey)
@@ -380,6 +431,9 @@ internal static class ModSettings
     internal static float BattleDamageMultiplier(BattleDamageMode mode)
         => mode == BattleDamageMode.Vanilla ? 1f : (float)mode;
 
+    internal static bool RealisticShellDamageEnabled
+        => RealisticShellDamage == RealisticShellDamageMode.Realistic;
+
     internal static string AccuracyPenaltyModeText(AccuracyPenaltyMode mode)
         => mode == AccuracyPenaltyMode.Vanilla ? "Vanilla" : $"/{(int)mode}";
 
@@ -388,6 +442,9 @@ internal static class ModSettings
 
     internal static string BattleDamageModeText(BattleDamageMode mode)
         => mode == BattleDamageMode.Vanilla ? "Unchanged" : $"{(int)mode}x";
+
+    internal static string RealisticShellDamageModeText(RealisticShellDamageMode mode)
+        => mode == RealisticShellDamageMode.Realistic ? "Realistic" : "Vanilla";
 
     internal static string AiFleetCompositionModeText(AiFleetCompositionMode mode)
         => mode switch
@@ -398,13 +455,7 @@ internal static class ModSettings
         };
 
     internal static float AiArmsRaceMinimumCompetitiveRatio
-        => AiArmsRace switch
-        {
-            AiArmsRaceMode.Loose35 => 0.35f,
-            AiArmsRaceMode.Standard60 => 0.60f,
-            AiArmsRaceMode.Strict75 => 0.75f,
-            _ => 0f,
-        };
+        => 0f;
 
     internal static string AiArmsRaceModeText(AiArmsRaceMode mode)
         => mode switch
@@ -418,6 +469,9 @@ internal static class ModSettings
     internal static string AiArmsRaceModeText(bool enabled)
         => AiArmsRaceModeText(enabled ? AiArmsRaceMode.Standard60 : AiArmsRaceMode.Disabled);
 
+    internal static string AdvancedAiBuilderModeText(bool enabled)
+        => enabled ? "Enhanced" : "Vanilla";
+
     internal static void LogCurrentSettings(string context)
     {
         Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP settings ({context}): {CurrentSettingsText()}.");
@@ -427,10 +481,11 @@ internal static class ModSettings
         => $"Battle Weather={BattleWeatherModeText(BattleWeatherAlwaysSunny)}; " +
            $"Battle Spotting={BattleSpottingRangeModeText(BattleSpottingRange)}; " +
            $"Battle Damage={BattleDamageModeText(BattleDamage)}; " +
+           $"Realistic Shell Damage={RealisticShellDamageModeText(RealisticShellDamage)}; " +
            $"Crew & Accuracy Balance={AccuracyPenaltyModeText(DesignAccuracyPenaltyMode)}; " +
            $"Port Strike={PortStrikeModeText(PortStrikeBalanced)}; " +
            $"AI Fleet Mix={AiFleetCompositionModeText(AiFleetComposition)}; " +
-           $"AI Arms Race={AiArmsRaceModeText(AiArmsRace)}; " +
+           $"Advanced AI Builder={AdvancedAiBuilderModeText(AdvancedAiBuilderEnabled)}; " +
            $"Shared Designs={CampaignSharedDesignUsageSettings.CurrentModeText()}; " +
            $"Suspend Dock Overcapacity={ShipyardCapacityModeText(ShipyardCapacityBalanced)}; " +
            $"Canal Openings={CanalOpeningModeText(EarlyCanalOpeningsEnabled)}; " +
@@ -442,7 +497,8 @@ internal static class ModSettings
            $"Obsolete Tech & Hulls={ObsoleteDesignRetentionModeText(ObsoleteDesignRetentionEnabled)}; " +
            $"Superstructure Compatibility={SuperstructureRefitsModeText(SuperstructureRefitsEnabled)}; " +
            $"Map Geometry={CampaignMapModeText(CampaignMapWraparoundEnabled)}; " +
-           $"Experimental Nation Ship Paints={ExperimentalNationShipPaintsModeText(ExperimentalNationShipPaintsEnabled)}";
+           $"Experimental Nation Ship Paints={ExperimentalNationShipPaintsModeText(ExperimentalNationShipPaintsEnabled)}; " +
+           $"Battle Runtime Diagnostics={BattleRuntimeDiagnosticsModeText(BattleRuntimeDiagnosticsEnabled)}";
 
     internal static string BattleWeatherModeText(bool alwaysSunny)
         => alwaysSunny ? "Always Sunny" : "Vanilla";
@@ -475,6 +531,9 @@ internal static class ModSettings
         => enabled ? "Disc World" : "Flat Earth";
 
     internal static string ExperimentalNationShipPaintsModeText(bool enabled)
+        => enabled ? "On" : "Off";
+
+    internal static string BattleRuntimeDiagnosticsModeText(bool enabled)
         => enabled ? "On" : "Off";
 
     internal static string TechnologySpreadModeText(TechnologySpreadMode mode)
@@ -512,25 +571,20 @@ internal static class ModSettings
             : BattleDamageMode.X3;
     }
 
+    private static RealisticShellDamageMode LoadRealisticShellDamageMode()
+    {
+        int stored = PlayerPrefs.GetInt(RealisticShellDamageModeKey, (int)RealisticShellDamageMode.Realistic);
+        return Enum.IsDefined(typeof(RealisticShellDamageMode), stored)
+            ? (RealisticShellDamageMode)stored
+            : RealisticShellDamageMode.Realistic;
+    }
+
     private static AiFleetCompositionMode LoadAiFleetCompositionMode()
     {
         int stored = PlayerPrefs.GetInt(AiFleetCompositionModeKey, (int)AiFleetCompositionMode.Heavy);
         return Enum.IsDefined(typeof(AiFleetCompositionMode), stored)
             ? (AiFleetCompositionMode)stored
             : AiFleetCompositionMode.Heavy;
-    }
-
-    private static AiArmsRaceMode LoadAiArmsRaceMode()
-    {
-        if (!PlayerPrefs.HasKey(AiArmsRaceModeKey))
-            return PlayerPrefs.GetInt(AiArmsRaceEnabledKey, 1) == 0
-                ? AiArmsRaceMode.Disabled
-                : AiArmsRaceMode.Standard60;
-
-        int stored = PlayerPrefs.GetInt(AiArmsRaceModeKey, (int)AiArmsRaceMode.Standard60);
-        return Enum.IsDefined(typeof(AiArmsRaceMode), stored)
-            ? (AiArmsRaceMode)stored
-            : AiArmsRaceMode.Standard60;
     }
 
     private static bool LoadEarlyCanalOpeningsEnabled()

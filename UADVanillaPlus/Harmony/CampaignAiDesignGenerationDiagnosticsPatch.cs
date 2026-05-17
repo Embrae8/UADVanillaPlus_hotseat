@@ -50,7 +50,7 @@ internal static class CampaignAiDesignGenerationDiagnostics
             ActiveByPlayer[playerPointer] = context;
 
             Log(
-                $"start turn={context.TurnLabel} nation={context.Nation} prewarming={BoolText(context.Prewarming)} designUsage={context.DesignUsage} sharedUsage={context.SharedUsage} before={context.Before.CountText()} newestBefore={context.Before.NewestText()} buildableBefore={context.Before.BuildableText()} hulls={context.Before.HullAvailabilityText()}.");
+                $"start turn={context.TurnLabel} nation={context.Nation} prewarming={BoolText(context.Prewarming)} advancedAiBuilder={AdvancedAiBuilderLabel()} designUsage={context.DesignUsage} sharedUsage={context.SharedUsage} before={context.Before.CountText()} newestBefore={context.Before.NewestText()} buildableBefore={context.Before.BuildableText()} hulls={context.Before.HullAvailabilityText()}.");
         }
         catch (Exception ex)
         {
@@ -90,12 +90,12 @@ internal static class CampaignAiDesignGenerationDiagnostics
             string replacementAfterFresh = context.ReplacementAfterFreshText(gate);
 
             Log(
-                $"result turn={context.TurnLabel} nation={context.Nation} prewarming={BoolText(context.Prewarming)} designUsage={context.DesignUsage} sharedUsage={context.SharedUsage} before={context.Before.CountText()} after={after.CountText()} newestBefore={context.Before.NewestText()} newestAfter={after.NewestText()} buildableBefore={context.Before.BuildableText()} buildableAfter={after.BuildableText()} hulls={after.HullAvailabilityText()} new={newText} source={source} missingCandidates={context.Missing.Summary()} replacementCandidates={context.Replacement.Summary()} freshCoverCandidates={context.Stale.Summary()} staleCandidates=renamedToFreshCover selectedOrAcceptedTypes={context.AcceptedCandidateText()} sharedAttempted={context.SharedAttempted} sharedAccepted={context.SharedAccepted} randomAttempted={RandomAttemptText(context, newDesigns)} randomAttempts={context.RandomAttempts} randomSuccess={context.RandomSuccesses} randomFailures={context.RandomFailures} randomErased={context.RandomErased} outcome={outcome} gateReason={gateReason} designCount={gate.DesignCount} buildableTypes={gate.BuildableTypesText()} representedTypes={gate.RepresentedTypesText()} missingAfterExisting={gate.MissingAfterExistingText()} freshCoveredTypes={freshCoveredTypes} replacementAfterFresh={replacementAfterFresh} freshCover={freshCover} selectedType={context.SelectedTypeText(gate)} state={context.StateText(gate)} tries={context.TriesText(gate)} i={context.IText(gate)} j={context.JText(gate)}.");
+                $"result turn={context.TurnLabel} nation={context.Nation} prewarming={BoolText(context.Prewarming)} advancedAiBuilder={AdvancedAiBuilderLabel()} designUsage={context.DesignUsage} sharedUsage={context.SharedUsage} before={context.Before.CountText()} after={after.CountText()} newestBefore={context.Before.NewestText()} newestAfter={after.NewestText()} buildableBefore={context.Before.BuildableText()} buildableAfter={after.BuildableText()} hulls={after.HullAvailabilityText()} new={newText} source={source} missingCandidates={context.Missing.Summary()} replacementCandidates={context.Replacement.Summary()} freshCoverCandidates={context.Stale.Summary()} staleCandidates=renamedToFreshCover selectedOrAcceptedTypes={context.AcceptedCandidateText()} sharedAttempted={context.SharedAttempted} sharedAccepted={context.SharedAccepted} randomAttempted={RandomAttemptText(context, newDesigns)} randomAttempts={context.RandomAttempts} randomSuccess={context.RandomSuccesses} randomFailures={context.RandomFailures} randomErased={context.RandomErased} outcome={outcome} gateReason={gateReason} designCount={gate.DesignCount} buildableTypes={gate.BuildableTypesText()} representedTypes={gate.RepresentedTypesText()} missingAfterExisting={gate.MissingAfterExistingText()} freshCoveredTypes={freshCoveredTypes} replacementAfterFresh={replacementAfterFresh} freshCover={freshCover} selectedType={context.SelectedTypeText(gate)} state={context.StateText(gate)} tries={context.TriesText(gate)} i={context.IText(gate)} j={context.JText(gate)}.");
 
             if (newDesigns.Count == 0)
             {
                 Log(
-                    $"gate turn={context.TurnLabel} nation={context.Nation} prewarming={BoolText(context.Prewarming)} reason={gateReason} designCount={gate.DesignCount} buildableTypes={gate.BuildableTypesText()} representedTypes={gate.RepresentedTypesText()} missingAfterExisting={gate.MissingAfterExistingText()} freshCoveredTypes={freshCoveredTypes} replacementAfterFresh={replacementAfterFresh} selectedType={context.SelectedTypeText(gate)} state={context.StateText(gate)} tries={context.TriesText(gate)} i={context.IText(gate)} j={context.JText(gate)} predicates=missing:{context.Missing.Summary()} replacement:{context.Replacement.Summary()} freshCover:{context.Stale.Summary()} freshCoverDetails={freshCover} sharedAttempted={context.SharedAttempted} randomAttempts={context.RandomAttempts}.");
+                    $"gate turn={context.TurnLabel} nation={context.Nation} prewarming={BoolText(context.Prewarming)} advancedAiBuilder={AdvancedAiBuilderLabel()} reason={gateReason} designCount={gate.DesignCount} buildableTypes={gate.BuildableTypesText()} representedTypes={gate.RepresentedTypesText()} missingAfterExisting={gate.MissingAfterExistingText()} freshCoveredTypes={freshCoveredTypes} replacementAfterFresh={replacementAfterFresh} selectedType={context.SelectedTypeText(gate)} state={context.StateText(gate)} tries={context.TriesText(gate)} i={context.IText(gate)} j={context.JText(gate)} predicates=missing:{context.Missing.Summary()} replacement:{context.Replacement.Summary()} freshCover:{context.Stale.Summary()} freshCoverDetails={freshCover} sharedAttempted={context.SharedAttempted} randomAttempts={context.RandomAttempts}.");
             }
         }
         catch (Exception ex)
@@ -172,7 +172,7 @@ internal static class CampaignAiDesignGenerationDiagnostics
 
     internal static void ApplyMissingPredicateRefreshOverride(object displayClass, ShipType? candidate, ref bool result)
     {
-        if (result || candidate == null)
+        if (!ModSettings.AdvancedAiBuilderEnabled || result || candidate == null)
             return;
 
         if (!TryGetContext(displayClass, out GenerationContext? context) || context == null || context.Prewarming)
@@ -202,7 +202,7 @@ internal static class CampaignAiDesignGenerationDiagnostics
 
     internal static void ApplyRandomFromShipTypeRefreshOverride(ref ShipType? result)
     {
-        if (result != null || ActiveByPlayer.Count != 1)
+        if (!ModSettings.AdvancedAiBuilderEnabled || result != null || ActiveByPlayer.Count != 1)
             return;
 
         GenerationContext context = ActiveByPlayer.Values.First();
@@ -238,7 +238,7 @@ internal static class CampaignAiDesignGenerationDiagnostics
 
     internal static void ApplyExistingDesignTypeSelectorRefreshOverride(Ship? design, ref ShipType? result)
     {
-        if (design == null || result == null)
+        if (!ModSettings.AdvancedAiBuilderEnabled || design == null || result == null)
             return;
 
         GenerationContext? context = null;
@@ -283,7 +283,7 @@ internal static class CampaignAiDesignGenerationDiagnostics
 
     internal static void ApplyFreshnessOverride(object displayClass, Ship? design, ref bool result)
     {
-        if (!result || design == null)
+        if (!ModSettings.AdvancedAiBuilderEnabled || !result || design == null)
             return;
 
         if (!TryGetContext(displayClass, out GenerationContext? context) || context == null || context.Prewarming)
@@ -1085,6 +1085,9 @@ internal static class CampaignAiDesignGenerationDiagnostics
 
     private static string DesignUsageLabel(CampaignController? controller)
         => SafeString(() => controller?.designsUsage.ToString());
+
+    private static string AdvancedAiBuilderLabel()
+        => ModSettings.AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled);
 
     private static string BoolText(bool value)
         => value.ToString().ToLowerInvariant();
