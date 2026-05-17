@@ -1306,6 +1306,14 @@ internal static class DesignHullColorProofPatch
             return;
         }
 
+        if (PaintAreaFor(part) == PaintArea.HullSide)
+        {
+            DamagePaintSuppressedPartKeys.Remove(key);
+            RemoveAppliedPartSignatures(part);
+            TryApplyProofColor(part, "damage visuals hull repaint", force: true);
+            return;
+        }
+
         DamagePaintSuppressedPartKeys.Add(key);
         RemoveAppliedPartSignatures(part);
 

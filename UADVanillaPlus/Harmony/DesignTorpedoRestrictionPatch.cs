@@ -6,9 +6,10 @@ using UADVanillaPlus.GameData;
 namespace UADVanillaPlus.Harmony;
 
 // Patch intent: make major combatants feel less like torpedo boats by removing
-// torpedo launchers from the part availability list for CA and larger designs.
-// Hooking vanilla availability keeps player UI and AI/random design generation
-// on the same rule without scanning or mutating ship designs after the fact.
+// torpedo launchers from the human designer part list for CA and larger designs.
+// AI/random generation remains unrestricted during shipgen because some early
+// CA hulls require placeholder torpedo parts; successful AI designs are
+// sanitized afterward by CampaignGeneratedDesignSanitizer.
 [HarmonyPatch(typeof(Ship))]
 internal static class DesignTorpedoRestrictionPatch
 {
@@ -16,13 +17,35 @@ internal static class DesignTorpedoRestrictionPatch
 
     [HarmonyPostfix]
     [HarmonyPatch(nameof(Ship.IsPartAvailable), typeof(PartData), typeof(Player), typeof(ShipType), typeof(Ship))]
-    internal static void IsPartAvailablePostfix(PartData part, ShipType shipType, ref bool __result)
+    internal static void IsPartAvailablePostfix(PartData part, Player player, ShipType shipType, Ship ship, ref bool __result)
     {
-        if (!__result || !ModSettings.MajorShipTorpedoesRestricted || !IsTorpedo(part) || !IsMajorShipType(shipType))
+        if (!__result ||
+            !ModSettings.MajorShipTorpedoesRestricted ||
+            !IsHumanDesigner(player, ship) ||
+            !IsTorpedo(part) ||
+            !IsMajorShipType(shipType))
+        {
             return;
+        }
 
         __result = false;
         LogFirstBlock(part, shipType);
+    }
+
+    private static bool IsHumanDesigner(Player? player, Ship? ship)
+    {
+        Player? owner = player ?? ship?.player;
+        if (owner == null)
+            return false;
+
+        try
+        {
+            return owner.isMain && !owner.isAi;
+        }
+        catch
+        {
+            return false;
+        }
     }
 
     private static bool IsTorpedo(PartData? part)
@@ -60,6 +83,6 @@ internal static class DesignTorpedoRestrictionPatch
             return;
 
         string partName = string.IsNullOrWhiteSpace(part.nameUi) ? part.name : part.nameUi;
-        Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP design balance: hiding torpedo parts for {label}. First blocked part: {partName}.");
+        Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP design balance: hiding torpedo parts for player {label} designs. First blocked part: {partName}.");
     }
 }

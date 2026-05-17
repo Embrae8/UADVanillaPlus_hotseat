@@ -27,8 +27,13 @@ internal static class InGameOptionsMenuPatch
     private const string MenuName = "UADVP Options";
     private const string ContentName = "UADVP_OptionsContent";
     private const string BattleWeatherOptionName = "UADVP_Option_BattleWeather";
+    private const string BattleSpottingRangeOptionName = "UADVP_Option_BattleSpottingRange";
+    private const string BattleDamageOptionName = "UADVP_Option_BattleDamage";
     private const string DesignAccuracyPenaltiesOptionName = "UADVP_Option_DesignAccuracyPenalties";
     private const string PortStrikeOptionName = "UADVP_Option_PortStrike";
+    private const string AiFleetCompositionOptionName = "UADVP_Option_AiFleetComposition";
+    private const string AiArmsRaceOptionName = "UADVP_Option_AiArmsRace";
+    private const string SharedDesignsUsageOptionName = "UADVP_Option_SharedDesignsUsage";
     private const string MajorShipTorpedoesOptionName = "UADVP_Option_MajorShipTorpedoes";
     private const string ObsoleteDesignRetentionOptionName = "UADVP_Option_ObsoleteDesignRetention";
     private const string SuperstructureRefitsOptionName = "UADVP_Option_SuperstructureRefits";
@@ -289,9 +294,29 @@ internal static class InGameOptionsMenuPatch
                     ("Vanilla", !ModSettings.BattleWeatherAlwaysSunny, () => SetBattleWeatherMode(false)));
                 AddSegmentedOption(
                     pane.transform,
+                    BattleSpottingRangeOptionName,
+                    "Battle Spotting",
+                    "Multiplies the spotter-side spotting range contribution for player and AI ships in battle. Target visibility, weather, smoke, and firing reveal behavior stay vanilla.",
+                    true,
+                    ("Vanilla", ModSettings.BattleSpottingRange == ModSettings.BattleSpottingRangeMode.Vanilla, () => SetBattleSpottingRangeMode(ModSettings.BattleSpottingRangeMode.Vanilla)),
+                    ("3x", ModSettings.BattleSpottingRange == ModSettings.BattleSpottingRangeMode.X3, () => SetBattleSpottingRangeMode(ModSettings.BattleSpottingRangeMode.X3)),
+                    ("5x", ModSettings.BattleSpottingRange == ModSettings.BattleSpottingRangeMode.X5, () => SetBattleSpottingRangeMode(ModSettings.BattleSpottingRangeMode.X5)),
+                    ("10x", ModSettings.BattleSpottingRange == ModSettings.BattleSpottingRangeMode.X10, () => SetBattleSpottingRangeMode(ModSettings.BattleSpottingRangeMode.X10)));
+                AddSegmentedOption(
+                    pane.transform,
+                    BattleDamageOptionName,
+                    "Battle Damage",
+                    "Multiplies vanilla's global gun and torpedo section-damage params once when game data is loaded. Unchanged restores vanilla damage values; higher modes are deliberately blunt and affect player and AI firepower.",
+                    true,
+                    ("Unchanged", ModSettings.BattleDamage == ModSettings.BattleDamageMode.Vanilla, () => SetBattleDamageMode(ModSettings.BattleDamageMode.Vanilla)),
+                    ("2x", ModSettings.BattleDamage == ModSettings.BattleDamageMode.X2, () => SetBattleDamageMode(ModSettings.BattleDamageMode.X2)),
+                    ("3x", ModSettings.BattleDamage == ModSettings.BattleDamageMode.X3, () => SetBattleDamageMode(ModSettings.BattleDamageMode.X3)),
+                    ("5x", ModSettings.BattleDamage == ModSettings.BattleDamageMode.X5, () => SetBattleDamageMode(ModSettings.BattleDamageMode.X5)));
+                AddSegmentedOption(
+                    pane.transform,
                     DesignAccuracyPenaltiesOptionName,
-                    "Accuracy Penalties",
-                    "Reduces extreme smoke, stability, and instability accuracy penalties from ship design. This helps prevent otherwise decent ships from becoming unrealistically unable to hit. The active effect remains in battles, but changing this option is disabled there because the game has already parsed battle stats.",
+                    "Crew & Accuracy Balance",
+                    "Flattens extreme battle accuracy swings from design-side smoke/stability/instability penalties and crew-training Accuracy, Aiming, Reload, and Damage Control bonuses or penalties. /5 pulls affected curves five times closer to neutral. Vanilla keeps the game's original values. Changing this option is disabled while a battle is loading or active.",
                     CanChangeAccuracyPenalties(),
                     ("/10", ModSettings.DesignAccuracyPenaltyMode == ModSettings.AccuracyPenaltyMode.Div10, () => SetDesignAccuracyPenaltiesMode(ModSettings.AccuracyPenaltyMode.Div10)),
                     ("/5", ModSettings.DesignAccuracyPenaltyMode == ModSettings.AccuracyPenaltyMode.Div5, () => SetDesignAccuracyPenaltiesMode(ModSettings.AccuracyPenaltyMode.Div5)),
@@ -307,6 +332,34 @@ internal static class InGameOptionsMenuPatch
                     true,
                     ("Balanced", ModSettings.PortStrikeBalanced, () => SetPortStrikeMode(true)),
                     ("Vanilla", !ModSettings.PortStrikeBalanced, () => SetPortStrikeMode(false)));
+                AddSegmentedOption(
+                    pane.transform,
+                    AiFleetCompositionOptionName,
+                    "AI Fleet Mix",
+                    "Adjusts AI surface-ship construction weights. Vanilla keeps the game's original light-ship-heavy ratios. Balanced gives BB, BC, CA, CL, DD, and TB equal weight. Heavy favors capital and cruiser fleets while reducing destroyer and torpedo-boat pressure.",
+                    true,
+                    ("Vanilla", ModSettings.AiFleetComposition == ModSettings.AiFleetCompositionMode.Vanilla, () => SetAiFleetCompositionMode(ModSettings.AiFleetCompositionMode.Vanilla)),
+                    ("Balanced", ModSettings.AiFleetComposition == ModSettings.AiFleetCompositionMode.Balanced, () => SetAiFleetCompositionMode(ModSettings.AiFleetCompositionMode.Balanced)),
+                    ("Heavy", ModSettings.AiFleetComposition == ModSettings.AiFleetCompositionMode.Heavy, () => SetAiFleetCompositionMode(ModSettings.AiFleetCompositionMode.Heavy)));
+                AddSegmentedOption(
+                    pane.transform,
+                    AiArmsRaceOptionName,
+                    "AI Arms Race",
+                    "Compares AI designs against current world benchmarks and blocks or replaces designs below the selected competitiveness threshold.",
+                    true,
+                    ("Disabled", ModSettings.AiArmsRace == ModSettings.AiArmsRaceMode.Disabled, () => SetAiArmsRaceMode(ModSettings.AiArmsRaceMode.Disabled)),
+                    ("35%", ModSettings.AiArmsRace == ModSettings.AiArmsRaceMode.Loose35, () => SetAiArmsRaceMode(ModSettings.AiArmsRaceMode.Loose35)),
+                    ("60%", ModSettings.AiArmsRace == ModSettings.AiArmsRaceMode.Standard60, () => SetAiArmsRaceMode(ModSettings.AiArmsRaceMode.Standard60)),
+                    ("75%", ModSettings.AiArmsRace == ModSettings.AiArmsRaceMode.Strict75, () => SetAiArmsRaceMode(ModSettings.AiArmsRaceMode.Strict75)));
+                AddSegmentedOption(
+                    pane.transform,
+                    SharedDesignsUsageOptionName,
+                    "Shared Designs",
+                    "Changes the active campaign shared-design setting for future AI designs. Existing designs are not altered, and the selected mode persists when the campaign is saved.",
+                    CampaignSharedDesignUsageSettings.HasActiveCampaign,
+                    ("Off", CampaignSharedDesignUsageSettings.CurrentMode == CampaignController.SharedDesignUsage.Off, () => SetSharedDesignsUsageMode(CampaignController.SharedDesignUsage.Off)),
+                    ("Selective", CampaignSharedDesignUsageSettings.CurrentMode == CampaignController.SharedDesignUsage.Selective, () => SetSharedDesignsUsageMode(CampaignController.SharedDesignUsage.Selective)),
+                    ("Always", CampaignSharedDesignUsageSettings.CurrentMode == CampaignController.SharedDesignUsage.Always, () => SetSharedDesignsUsageMode(CampaignController.SharedDesignUsage.Always)));
                 AddSegmentedOption(
                     pane.transform,
                     ShipyardCapacityOptionName,
@@ -327,12 +380,13 @@ internal static class InGameOptionsMenuPatch
                     pane.transform,
                     TechnologySpreadOptionName,
                     "Technology Spread",
-                    "Gradual, Swift, and Unrestricted multiply vanilla research speed for major nations that trail the current leader in a category. Economy, tech budget, priorities, and historical-year gates still apply.",
+                    "Gradual, Swift, and Unrestricted multiply vanilla research speed for major nations that trail the current leader in a category. Historical grants every major nation normal technologies by historical year and sets research budgets to zero. Repeatable end-techs remain vanilla.",
                     true,
                     ("Vanilla", ModSettings.TechnologySpread == ModSettings.TechnologySpreadMode.Vanilla, () => SetTechnologySpreadMode(ModSettings.TechnologySpreadMode.Vanilla)),
                     ("Gradual", ModSettings.TechnologySpread == ModSettings.TechnologySpreadMode.Gradual, () => SetTechnologySpreadMode(ModSettings.TechnologySpreadMode.Gradual)),
                     ("Swift", ModSettings.TechnologySpread == ModSettings.TechnologySpreadMode.Swift, () => SetTechnologySpreadMode(ModSettings.TechnologySpreadMode.Swift)),
-                    ("Unrestricted", ModSettings.TechnologySpread == ModSettings.TechnologySpreadMode.Unrestricted, () => SetTechnologySpreadMode(ModSettings.TechnologySpreadMode.Unrestricted)));
+                    ("Unrestricted", ModSettings.TechnologySpread == ModSettings.TechnologySpreadMode.Unrestricted, () => SetTechnologySpreadMode(ModSettings.TechnologySpreadMode.Unrestricted)),
+                    ("Historical", ModSettings.TechnologySpread == ModSettings.TechnologySpreadMode.Historical, () => SetTechnologySpreadMode(ModSettings.TechnologySpreadMode.Historical)));
                 AddSegmentedOption(
                     pane.transform,
                     CampaignEndDateOptionName,
@@ -600,11 +654,29 @@ internal static class InGameOptionsMenuPatch
         RefreshLauncherButton();
     }
 
+    private static void SetBattleSpottingRangeMode(ModSettings.BattleSpottingRangeMode mode)
+    {
+        if (ModSettings.BattleSpottingRange != mode)
+            ModSettings.BattleSpottingRange = mode;
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
+    private static void SetBattleDamageMode(ModSettings.BattleDamageMode mode)
+    {
+        if (ModSettings.BattleDamage != mode)
+            ModSettings.BattleDamage = mode;
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
     private static void SetDesignAccuracyPenaltiesMode(ModSettings.AccuracyPenaltyMode mode)
     {
         if (!CanChangeAccuracyPenalties())
         {
-            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP option: Accuracy Penalties cannot be changed while a battle is loading or active.");
+            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP option: Crew & Accuracy Balance cannot be changed while a battle is loading or active.");
             RefreshMenu();
             RefreshLauncherButton();
             return;
@@ -625,6 +697,34 @@ internal static class InGameOptionsMenuPatch
         if (ModSettings.PortStrikeBalanced != balanced)
             ModSettings.PortStrikeBalanced = balanced;
 
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
+    private static void SetAiFleetCompositionMode(ModSettings.AiFleetCompositionMode mode)
+    {
+        if (ModSettings.AiFleetComposition != mode)
+        {
+            ModSettings.AiFleetComposition = mode;
+            CampaignAiFleetCompositionPatch.ApplyCurrentSetting("options menu");
+        }
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
+    private static void SetAiArmsRaceMode(ModSettings.AiArmsRaceMode mode)
+    {
+        if (ModSettings.AiArmsRace != mode)
+            ModSettings.AiArmsRace = mode;
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
+    private static void SetSharedDesignsUsageMode(CampaignController.SharedDesignUsage mode)
+    {
+        CampaignSharedDesignUsageSettings.TrySetMode(mode);
         RefreshMenu();
         RefreshLauncherButton();
     }
@@ -735,7 +835,15 @@ internal static class InGameOptionsMenuPatch
     private static void SetTechnologySpreadMode(ModSettings.TechnologySpreadMode mode)
     {
         if (ModSettings.TechnologySpread != mode)
+        {
             ModSettings.TechnologySpread = mode;
+
+            if (mode == ModSettings.TechnologySpreadMode.Historical)
+            {
+                CampaignHistoricalResearchPatch.ApplyCurrentSetting("option change");
+                RefreshCampaignCostUi("Technology Spread mode change");
+            }
+        }
 
         RefreshMenu();
         RefreshLauncherButton();
@@ -830,7 +938,7 @@ internal static class InGameOptionsMenuPatch
         }
     }
 
-    private static void RefreshCampaignCostUi()
+    private static void RefreshCampaignCostUi(string reason = "Suspend Dock Overcapacity mode change")
     {
         try
         {
@@ -857,7 +965,7 @@ internal static class InGameOptionsMenuPatch
             try { ui.RefreshCampaignUI(); }
             catch (Exception ex) { Melon<UADVanillaPlusMod>.Logger.Warning($"UADVP option: campaign UI refresh failed. {ex.GetType().Name}: {ex.Message}"); }
 
-            Melon<UADVanillaPlusMod>.Logger.Msg("UADVP option: refreshed campaign cost UI after Suspend Dock Overcapacity mode change.");
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: refreshed campaign cost UI after {reason}.");
         }
         catch (Exception ex)
         {
@@ -899,15 +1007,21 @@ internal static class InGameOptionsMenuPatch
     }
 
     private static bool AnyBalanceOptionEnabled()
-        => ModSettings.BattleWeatherAlwaysSunny || ModSettings.DesignAccuracyPenaltiesBalanced || ModSettings.PortStrikeBalanced || ModSettings.MajorShipTorpedoesRestricted || ModSettings.ObsoleteDesignRetentionEnabled || ModSettings.SuperstructureRefitsEnabled || ModSettings.ShipyardCapacityBalanced || ModSettings.EarlyCanalOpeningsEnabled || ModSettings.TechnologySpread != ModSettings.TechnologySpreadMode.Vanilla || !ModSettings.CampaignEndDateEnabled || ModSettings.MineWarfareDisabled || ModSettings.SubmarineWarfareDisabled || ModSettings.CampaignMapWraparoundEnabled || ModSettings.ExperimentalNationShipPaintsEnabled;
+        => ModSettings.BattleWeatherAlwaysSunny || ModSettings.BattleSpottingRange != ModSettings.BattleSpottingRangeMode.Vanilla || ModSettings.BattleDamage != ModSettings.BattleDamageMode.Vanilla || ModSettings.DesignAccuracyPenaltiesBalanced || ModSettings.PortStrikeBalanced || ModSettings.AiFleetComposition != ModSettings.AiFleetCompositionMode.Vanilla || ModSettings.AiArmsRaceEnabled || ModSettings.MajorShipTorpedoesRestricted || ModSettings.ObsoleteDesignRetentionEnabled || ModSettings.SuperstructureRefitsEnabled || ModSettings.ShipyardCapacityBalanced || ModSettings.EarlyCanalOpeningsEnabled || ModSettings.TechnologySpread != ModSettings.TechnologySpreadMode.Vanilla || !ModSettings.CampaignEndDateEnabled || ModSettings.MineWarfareDisabled || ModSettings.SubmarineWarfareDisabled || ModSettings.CampaignMapWraparoundEnabled || ModSettings.ExperimentalNationShipPaintsEnabled;
 
     private static void AddLauncherTooltip(GameObject buttonObject)
         => AddTooltip(
             buttonObject,
-            $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nAccuracy Penalties: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}",
+            LauncherTooltipText,
             () => launcherButton != null && launcherButton.interactable);
 
+    private static string LauncherTooltipText()
+        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAI Arms Race: {AiArmsRaceModeText(ModSettings.AiArmsRace)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}";
+
     private static void AddTooltip(GameObject target, string text, Func<bool>? canShow = null)
+        => AddTooltip(target, () => text, canShow);
+
+    private static void AddTooltip(GameObject target, Func<string> textFactory, Func<bool>? canShow = null)
     {
         RemoveTooltipHandlers(target);
         OnEnter onEnter = target.AddComponent<OnEnter>();
@@ -916,7 +1030,7 @@ internal static class InGameOptionsMenuPatch
             if (G.ui == null || canShow?.Invoke() == false)
                 return;
 
-            G.ui.ShowTooltip(text, target);
+            G.ui.ShowTooltip(textFactory(), target);
         });
 
         OnLeave onLeave = target.AddComponent<OnLeave>();
@@ -1065,8 +1179,20 @@ internal static class InGameOptionsMenuPatch
     private static string PortStrikeModeText(bool balanced)
         => balanced ? "Balanced" : "Vanilla";
 
+    private static string AiFleetCompositionModeText(ModSettings.AiFleetCompositionMode mode)
+        => ModSettings.AiFleetCompositionModeText(mode);
+
+    private static string AiArmsRaceModeText(ModSettings.AiArmsRaceMode mode)
+        => ModSettings.AiArmsRaceModeText(mode);
+
     private static string DesignAccuracyPenaltiesModeText(ModSettings.AccuracyPenaltyMode mode)
         => ModSettings.AccuracyPenaltyModeText(mode);
+
+    private static string BattleSpottingRangeModeText(ModSettings.BattleSpottingRangeMode mode)
+        => ModSettings.BattleSpottingRangeModeText(mode);
+
+    private static string BattleDamageModeText(ModSettings.BattleDamageMode mode)
+        => ModSettings.BattleDamageModeText(mode);
 
     private static string MajorShipTorpedoesModeText(bool restricted)
         => restricted ? "Disallowed" : "Vanilla";

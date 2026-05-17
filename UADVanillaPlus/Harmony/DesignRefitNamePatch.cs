@@ -34,7 +34,7 @@ internal static class DesignRefitNamePatch
             if (__instance == null || tempPlayer == null || campaign == null)
                 return true;
 
-            string baseName = CleanRefitBaseName(__instance.name);
+            string baseName = CleanRefitBaseName(__instance);
             if (string.IsNullOrWhiteSpace(baseName))
                 return true;
 
@@ -66,7 +66,7 @@ internal static class DesignRefitNamePatch
             if (design == null || design.Pointer == currentDesign.Pointer)
                 continue;
 
-            if (!TryReadRefitYearName(design.name, out string candidateBaseName, out int candidateYear, out int candidateOrdinal))
+            if (!TryReadRefitYearName(design.name, design, out string candidateBaseName, out int candidateYear, out int candidateOrdinal))
                 continue;
 
             if (candidateYear != refitYear || !string.Equals(candidateBaseName, baseName, StringComparison.OrdinalIgnoreCase))
@@ -78,12 +78,13 @@ internal static class DesignRefitNamePatch
         return highestOrdinal + 1;
     }
 
-    private static string CleanRefitBaseName(string? name)
+    private static string CleanRefitBaseName(Ship? ship)
     {
+        string? name = ship?.name;
         if (string.IsNullOrWhiteSpace(name))
             return string.Empty;
 
-        if (TryReadRefitYearName(name, out string baseName, out _, out _))
+        if (TryReadRefitYearName(name, ship, out string baseName, out _, out _))
             return baseName;
 
         string cleaned = StripLegacyCloneSuffix(name.Trim());
@@ -91,10 +92,10 @@ internal static class DesignRefitNamePatch
         if (yearStart > 0)
             cleaned = cleaned[..yearStart].TrimEnd();
 
-        return cleaned;
+        return StripLeadingShipTypePrefix(cleaned, ship);
     }
 
-    private static bool TryReadRefitYearName(string? name, out string baseName, out int year, out int ordinal)
+    private static bool TryReadRefitYearName(string? name, Ship? ship, out string baseName, out int year, out int ordinal)
     {
         baseName = string.Empty;
         year = 0;
@@ -107,7 +108,7 @@ internal static class DesignRefitNamePatch
         if (!match.Success || !int.TryParse(match.Groups["year"].Value, NumberStyles.Integer, CultureInfo.InvariantCulture, out year))
             return false;
 
-        baseName = match.Groups["base"].Value.Trim();
+        baseName = StripLeadingShipTypePrefix(match.Groups["base"].Value.Trim(), ship);
         if (string.IsNullOrWhiteSpace(baseName))
             return false;
 
@@ -119,6 +120,60 @@ internal static class DesignRefitNamePatch
         }
 
         ordinal = LetterOrdinal(match.Groups["letter"].Value);
+        return true;
+    }
+
+    private static string StripLeadingShipTypePrefix(string baseName, Ship? ship)
+    {
+        string cleaned = baseName.Trim();
+        foreach (string typeCode in ShipTypeCodes(ship))
+        {
+            if (!IsCompactShipTypeCode(typeCode))
+                continue;
+
+            string token = typeCode.Trim();
+            if (cleaned.Length <= token.Length || !cleaned.StartsWith(token, StringComparison.OrdinalIgnoreCase))
+                continue;
+
+            char boundary = cleaned[token.Length];
+            if (!char.IsWhiteSpace(boundary) && boundary != '-' && boundary != ':')
+                continue;
+
+            string withoutType = cleaned[(token.Length + 1)..].TrimStart();
+            while (withoutType.Length > 0 && (withoutType[0] == '-' || withoutType[0] == ':'))
+                withoutType = withoutType[1..].TrimStart();
+
+            if (!string.IsNullOrWhiteSpace(withoutType))
+                return withoutType;
+        }
+
+        return cleaned;
+    }
+
+    private static IEnumerable<string> ShipTypeCodes(Ship? ship)
+    {
+        if (!string.IsNullOrWhiteSpace(ship?.shipType?.name))
+            yield return ship.shipType.name;
+
+        if (!string.IsNullOrWhiteSpace(ship?.shipType?.nameUi))
+            yield return ship.shipType.nameUi;
+    }
+
+    private static bool IsCompactShipTypeCode(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return false;
+
+        string token = value.Trim();
+        if (token.Length is < 1 or > 4)
+            return false;
+
+        foreach (char ch in token)
+        {
+            if (!char.IsLetter(ch))
+                return false;
+        }
+
         return true;
     }
 

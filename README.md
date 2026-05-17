@@ -2,7 +2,7 @@
 
 UAD Vanilla Plus (`UAD:VP`) is a lightweight mod for Ultimate Admiral: Dreadnoughts that keeps the base game feel while adding small quality-of-life improvements.
 
-Current version: `0.4.13`
+Current version: `0.5.97`
 
 ## Philosophy
 
@@ -43,13 +43,17 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 - **Research standing markers**: show colored badges spelling out whether each research category is ahead of, behind, or tied with the leading major nation.
 - **Direct diplomacy politics actions**: add Declare War and Force Peace buttons with confirmation to campaign politics rows, with Force Peace using the vanilla reparation flow when war victory points produce a clear winner.
 - **In-game options menu**: control UAD:VP balance options from the top-right game UI.
+- **Shared design usage control**: change the active campaign's Shared Designs mode after campaign start so future AI design needs can use `Off`, `Selective`, or `Always` without starting a new campaign.
+- **Shared design import adaptation**: let AI shared-design imports safely downgrade armor quality, torpedo size, radio, rangefinder, steering, auxiliary-engine, and drive-shaft components, ignore safe stat-only tech baggage, and trim range or speed for slight tonnage near misses before final build validation.
 
 **Balance:**
 
 - **Port Strike balance**: scales transport losses from undefended port strikes by attacker tonnage instead of allowing small raiders to destroy large transport groups.
+- **AI Fleet Mix**: optional `Vanilla`, `Balanced`, and `Heavy` modes adjust AI surface-ship construction weights and, outside vanilla mode, favor the most under-target valid surface types. This defaults to `Heavy`.
+- **AI Arms Race**: optional `Disabled`, `35%`, `60%`, and `75%` modes block AI surface-ship designs and builds below the selected same-type world benchmark threshold, and nudge AI design generation toward weak surface-ship types. This defaults to `60%`.
 - **Suspend Dock Overcapacity**: automatically delays lower-priority repairs, builds, and refits when monthly dock work exceeds shipyard capacity; manual mode keeps vanilla overcapacity handling.
 - **Canal openings**: optional setting to open the Panama and Kiel canals from 1890 when a campaign map loads, matching early-campaign canals such as Suez; historical mode keeps vanilla's 1914 and 1895 opening years.
-- **Technology Spread**: optional `Gradual`, `Swift`, and `Unrestricted` modes that help major nations catch up faster in research categories where they trail the current leader. This defaults to vanilla.
+- **Technology Spread**: optional `Gradual`, `Swift`, and `Unrestricted` modes that help major nations catch up faster in research categories where they trail the current leader. `Historical` grants every major nation all normal technologies by historical year and disables research spending while leaving repeatable end-techs vanilla. This defaults to vanilla.
 - **Campaign End Date**: optional setting to disable vanilla's forced 1965 retirement so campaigns can continue past the normal end date. This defaults to enabled.
 - **Mine Warfare**: optional setting to disable minefield damage in existing campaigns and hide mine and minesweeping equipment from the ship designer. This defaults to enabled.
 - **Submarine Warfare**: optional setting to disable submarine construction and submarine campaign battles while leaving existing submarines in saved campaigns untouched. This defaults to enabled.
@@ -59,7 +63,9 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 **QoL:**
 
 - **Design ship counts**: show active, building, and unavailable ships for each design.
+- **Single-attempt auto design**: the designer Auto Design button now makes one generation attempt and keeps the result visible if it fails.
 - **Designs tab country viewer**: browse major AI nations' ship designs from the campaign Designs tab.
+- **Design power column**: show a compact VP effective-combat-power score in the campaign Designs tab.
 - **Refit design names**: use compact `Class (year)` names for player and AI refit designs, with same-year conflicts written as `Class (yearb)`, `Class (yearc)`, and so on.
 - **British late-hull tower availability**: correct missing campaign compatibility between the Battlecruiser VI, G3, and N3 hull families and their matching late British main and secondary towers.
 
@@ -74,11 +80,14 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 **QoL:**
 
 - **Battle speed quality-of-life**: keep the player's selected battle speed available when the game tries to slow simulation speed near enemies.
+- **Space pause toggle**: use Space in battle to pause and resume to the previous battle speed.
 - **Battle division AI control**: add an `AI` division-order toggle with `6` hotkey support in battle so selected friendly divisions can be handed back to AI control, with manual right-click orders returning them to player control.
 
 **Balance:**
 
-- **Accuracy penalty balance**: lets players reduce extreme smoke, stability, and instability accuracy penalties from ship design.
+- **Battle spotting range**: optional `Vanilla`, `3x`, `5x`, and `10x` modes multiply spotter-side spotting range for both player and AI ships. This defaults to `3x`.
+- **Battle Damage**: optional `Unchanged`, `2x`, `3x`, and `5x` modes multiply vanilla global gun and torpedo section-damage params for punchier battles. This defaults to `3x`.
+- **Crew & accuracy balance**: lets players flatten extreme smoke/stability/instability accuracy penalties and crew-training Accuracy, Aiming, Reload, and Damage Control swings.
 - **Battle weather balance**: optionally force daytime, clear skies, calm wind, and calm seas instead of random bad-weather rolls.
 
 ### Experimental

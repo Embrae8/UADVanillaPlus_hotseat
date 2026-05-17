@@ -25,6 +25,8 @@ internal static class CampaignFleetWindowDesignViewerPatch
     private static readonly Dictionary<Player, GameObject> DesignViewerFlagButtons = new();
     private static readonly Dictionary<GameObject, Image> DesignViewerFlagImages = new();
     private static readonly HashSet<GameObject> DesignShipCountHeaderTooltips = new();
+    private static readonly Dictionary<string, string> DesignPowerTextCache = new(StringComparer.Ordinal);
+    private static readonly HashSet<GameObject> DesignPowerHeaderTooltips = new();
     private static readonly MethodInfo? RefreshAllShipsUi = AccessTools.Method(typeof(CampaignFleetWindow), "RefreshAllShipsUi");
     private static readonly MethodInfo? SetDesignImageAndInfoForFirstShip = AccessTools.Method(typeof(CampaignFleetWindow), "SetDesignImageAndInfoForFirstShip");
     private static readonly MethodInfo? SetShipInfoAndImage = AccessTools.Method(typeof(CampaignFleetWindow), "SetShipInfoAndImage");
@@ -34,6 +36,12 @@ internal static class CampaignFleetWindowDesignViewerPatch
     private const float ToolbarTopGapMargin = 4f;
     private const float ToolbarFallbackTopOffset = 18f;
     private const float ContentTopGap = 32f;
+    private const string DesignPowerColumnName = "UADVP_DesignPower";
+    private const string DesignPowerHeaderName = "UADVP_DesignPowerHeader";
+    private const float DesignPowerColumnWidth = 46f;
+    private const float DesignPowerColumnGap = 3f;
+    private const float DesignYearColumnMinWidth = 42f;
+    private const float DesignShipCountColumnMinWidth = 58f;
 
     private static Player? designViewerPlayer;
     private static GameObject? designViewerToolbar;
@@ -45,6 +53,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
     private static bool refreshingDesignViewerList;
     private static bool suppressSortedPlayerDesignRefresh;
     private static bool loggedRefitDesignNameCleanup;
+    private static bool loggedDesignPowerColumn;
 
     internal static Ship? SelectedViewedDesign { get; private set; }
 
@@ -73,6 +82,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
             designViewerToolbar.SetActive(false);
 
         SelectedViewedDesign = null;
+        DesignPowerTextCache.Clear();
         RestoreDesignViewerContentLayout(G.ui?.FleetWindow);
     }
 
@@ -89,7 +99,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
 
         foreach (Player player in campaign.CampaignData.PlayersMajor)
         {
-            if (player == null || player == mainPlayer || !player.isAi)
+            if (player == null || player == mainPlayer || !player.isAi || player.IsDisabled())
                 continue;
 
             players.Add(player);
@@ -600,6 +610,102 @@ internal static class CampaignFleetWindowDesignViewerPatch
         ui.Name.text = design.isErased ? $"<color=#8F2F2F><s>{EscapeTextMeshProRichText(name)}</s></color>" : name;
     }
 
+    private static void SetDesignPowerText(FleetWindow_ShipElementUI ui, Ship design)
+    {
+        if (ui == null || design == null)
+            return;
+
+        TMP_Text powerText = EnsureDesignPowerText(ui);
+        if (powerText == null)
+            return;
+
+        powerText.text = DesignPowerDisplayText(design);
+    }
+
+    private static void NormalizeDesignRowLayout(FleetWindow_ShipElementUI ui)
+    {
+        if (ui == null)
+            return;
+
+        ConfigureCompactDesignColumn(ui.Year, DesignYearColumnMinWidth, TextAlignmentOptions.Center, TextOverflowModes.Overflow);
+        ConfigureCompactDesignColumn(ui.ShipCount, DesignShipCountColumnMinWidth, TextAlignmentOptions.Center, TextOverflowModes.Ellipsis);
+    }
+
+    private static void ConfigureCompactDesignColumn(
+        TMP_Text text,
+        float minWidth,
+        TextAlignmentOptions alignment,
+        TextOverflowModes overflowMode)
+    {
+        if (text == null)
+            return;
+
+        text.enableWordWrapping = false;
+        text.overflowMode = overflowMode;
+        text.alignment = alignment;
+
+        RectTransform rect = text.GetComponent<RectTransform>();
+        if (rect == null)
+            return;
+
+        LayoutGroup layoutGroup = rect.transform.parent?.GetComponent<LayoutGroup>();
+        if (layoutGroup != null)
+        {
+            LayoutElement layout = text.GetComponent<LayoutElement>() ?? text.gameObject.AddComponent<LayoutElement>();
+            layout.minWidth = Mathf.Max(layout.minWidth, minWidth);
+            layout.preferredWidth = Mathf.Max(layout.preferredWidth, minWidth);
+            layout.flexibleWidth = 0f;
+            return;
+        }
+
+        float currentWidth = rect.rect.width > 1f ? rect.rect.width : rect.sizeDelta.x;
+        if (currentWidth < minWidth)
+            rect.SetSizeWithCurrentAnchors(RectTransform.Axis.Horizontal, minWidth);
+    }
+
+    private static TMP_Text EnsureDesignPowerText(FleetWindow_ShipElementUI ui)
+    {
+        TMP_Text source = ui.ShipCount ?? ui.Tonnes ?? ui.Year ?? ui.Cost;
+        return source == null ? null : EnsurePowerTextClone(source, DesignPowerColumnName, false);
+    }
+
+    private static string DesignPowerDisplayText(Ship design)
+    {
+        string cacheKey = DesignPowerCacheKey(design);
+        if (DesignPowerTextCache.TryGetValue(cacheKey, out string cached))
+            return cached;
+
+        string text = "-";
+        try
+        {
+            EffectivePowerResult power = ShipEffectivePowerCalculator.Calculate(design);
+            text = ShipEffectivePowerCalculator.FormatCompactPower(power.AdjustedPower);
+        }
+        catch
+        {
+            text = "-";
+        }
+
+        DesignPowerTextCache[cacheKey] = text;
+        return text;
+    }
+
+    private static string DesignPowerCacheKey(Ship design)
+    {
+        try
+        {
+            string id = design.id.ToString();
+            if (!string.IsNullOrEmpty(id))
+                return $"{id}:{design.isRefitDesign}:{ShipDesignYear(design)}";
+        }
+        catch
+        {
+            // Fall through to the native pointer for older or unusual design rows.
+        }
+
+        return design.Pointer.ToString();
+    }
+
     private static string DesignRowDisplayName(Ship design)
     {
         string name = design.Name(false, false, false, false, true);
@@ -609,7 +715,38 @@ internal static class CampaignFleetWindowDesignViewerPatch
             LogRefitDesignNameCleanupOnce();
         }
 
+        if (IsSharedDesign(design) && !name.StartsWith("[S] ", StringComparison.Ordinal))
+            name = "[S] " + name;
+
         return name;
+    }
+
+    private static bool IsSharedDesign(Ship design)
+    {
+        if (design == null)
+            return false;
+
+        try
+        {
+            return ReadBoolMember(design, "isSharedDesign") ||
+                   ReadBoolMember(design, "IsSharedDesign") ||
+                   ReadBoolMember(design, "isShared");
+        }
+        catch
+        {
+            return false;
+        }
+    }
+
+    private static bool ReadBoolMember(object target, string memberName)
+    {
+        Type type = target.GetType();
+        PropertyInfo? property = type.GetProperty(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        if (property?.GetValue(target) is bool propertyValue)
+            return propertyValue;
+
+        FieldInfo? field = type.GetField(memberName, BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic);
+        return field?.GetValue(target) is bool fieldValue && fieldValue;
     }
 
     private static string StripRefitDesignCloneSuffix(string name)
@@ -678,13 +815,135 @@ internal static class CampaignFleetWindowDesignViewerPatch
     private static string FormatSimpleClassCounts(Dictionary<string, int> counts)
         => string.Join(", ", counts.OrderBy(kvp => kvp.Key).Select(kvp => $"{kvp.Key} {kvp.Value}"));
 
+    private static TMP_Text EnsurePowerTextClone(TMP_Text source, string objectName, bool isHeader)
+    {
+        if (source == null || source.transform?.parent == null)
+            return null;
+
+        Transform parent = source.transform.parent;
+        Transform existing = parent.Find(objectName);
+        GameObject powerObject;
+        TMP_Text powerText;
+
+        if (existing != null)
+        {
+            powerObject = existing.gameObject;
+            powerText = powerObject.GetComponent<TMP_Text>() ?? powerObject.GetComponentInChildren<TMP_Text>();
+        }
+        else
+        {
+            powerObject = UnityEngine.Object.Instantiate(source.gameObject, parent);
+            powerObject.name = objectName;
+            powerText = powerObject.GetComponent<TMP_Text>() ?? powerObject.GetComponentInChildren<TMP_Text>();
+            RemoveComponent<LocalizeText>(powerObject);
+            RemoveComponent<OnEnter>(powerObject);
+            RemoveComponent<OnLeave>(powerObject);
+            RemoveComponent<Button>(powerObject);
+            powerObject.transform.SetSiblingIndex(Mathf.Max(0, source.transform.GetSiblingIndex()));
+            LogDesignPowerColumnOnce();
+        }
+
+        if (powerText == null)
+            return null;
+
+        ConfigurePowerText(powerText, isHeader);
+        PositionPowerText(powerText, source);
+        powerObject.SetActive(source.gameObject.activeSelf);
+        return powerText;
+    }
+
+    private static void ConfigurePowerText(TMP_Text powerText, bool isHeader)
+    {
+        powerText.enableWordWrapping = false;
+        powerText.overflowMode = TextOverflowModes.Ellipsis;
+        powerText.alignment = TextAlignmentOptions.Center;
+        powerText.raycastTarget = isHeader;
+        if (!isHeader)
+            powerText.fontSize = Mathf.Min(powerText.fontSize, 11f);
+    }
+
+    private static void PositionPowerText(TMP_Text powerText, TMP_Text source)
+    {
+        RectTransform powerRect = powerText.GetComponent<RectTransform>();
+        RectTransform sourceRect = source.GetComponent<RectTransform>();
+        if (powerRect == null || sourceRect == null)
+            return;
+
+        LayoutGroup layoutGroup = powerRect.transform.parent?.GetComponent<LayoutGroup>();
+        if (layoutGroup != null)
+        {
+            LayoutElement layout = powerText.GetComponent<LayoutElement>() ?? powerText.gameObject.AddComponent<LayoutElement>();
+            layout.minWidth = DesignPowerColumnWidth;
+            layout.preferredWidth = DesignPowerColumnWidth;
+            layout.flexibleWidth = 0f;
+            return;
+        }
+
+        float sourceWidth = sourceRect.rect.width > 1f ? sourceRect.rect.width : Mathf.Max(1f, sourceRect.sizeDelta.x);
+        if (sourceWidth <= 1f)
+            sourceWidth = 58f;
+
+        powerRect.anchorMin = sourceRect.anchorMin;
+        powerRect.anchorMax = sourceRect.anchorMax;
+        powerRect.pivot = sourceRect.pivot;
+        powerRect.sizeDelta = new Vector2(DesignPowerColumnWidth, sourceRect.sizeDelta.y);
+        float x = sourceRect.anchoredPosition.x - (sourceWidth * 0.5f) - DesignPowerColumnGap - (DesignPowerColumnWidth * 0.5f);
+        powerRect.anchoredPosition = new Vector2(x, sourceRect.anchoredPosition.y);
+    }
+
+    private static void RemoveComponent<T>(GameObject target) where T : Component
+    {
+        T component = target?.GetComponent<T>();
+        if (component != null)
+            UnityEngine.Object.Destroy(component);
+    }
+
+    private static void LogDesignPowerColumnOnce()
+    {
+        if (loggedDesignPowerColumn)
+            return;
+
+        loggedDesignPowerColumn = true;
+        Melon<UADVanillaPlusMod>.Logger.Msg("UADVP design viewer: added power estimate column.");
+    }
+
+    private static void EnsureDesignPowerHeader(CampaignFleetWindow window)
+    {
+        GameObject target = FindDesignShipCountHeaderTarget(window);
+        TMP_Text sourceText = target?.GetComponent<TMP_Text>() ?? target?.GetComponentInChildren<TMP_Text>();
+        if (sourceText == null)
+            return;
+
+        TMP_Text powerText = EnsurePowerTextClone(sourceText, DesignPowerHeaderName, true);
+        if (powerText == null)
+            return;
+
+        powerText.text = "Pwr";
+        GameObject powerObject = powerText.gameObject;
+        if (DesignPowerHeaderTooltips.Contains(powerObject))
+            return;
+
+        DesignPowerHeaderTooltips.Add(powerObject);
+        AddRawTooltip(powerObject, "Estimated combat power from vanilla Ship.EstimatePower.\nApproximate internal score; use as a sanity-check aid.");
+    }
+
     private static void EnsureDesignShipCountHeaderTooltip(CampaignFleetWindow window)
+    {
+        GameObject target = FindDesignShipCountHeaderTarget(window);
+
+        if (target == null || DesignShipCountHeaderTooltips.Contains(target))
+            return;
+
+        DesignShipCountHeaderTooltips.Add(target);
+        AddRawTooltip(target, "Shown as active/building/other.\nBuilding uses total(foreign contracts).\nActive: afloat and available.\nOther: refit, repair, mothball, or otherwise unavailable.");
+    }
+
+    private static GameObject FindDesignShipCountHeaderTarget(CampaignFleetWindow window)
     {
         GameObject header = window?.DesignHeader;
         if (header == null)
-            return;
+            return null;
 
-        GameObject target = null;
         foreach (GameObject child in header.GetChildren())
         {
             if (child == null)
@@ -698,16 +957,11 @@ internal static class CampaignFleetWindowDesignViewerPatch
                 text.Contains("Ship Count", StringComparison.OrdinalIgnoreCase) ||
                 text.Contains("Count", StringComparison.OrdinalIgnoreCase))
             {
-                target = child;
-                break;
+                return child;
             }
         }
 
-        if (target == null || DesignShipCountHeaderTooltips.Contains(target))
-            return;
-
-        DesignShipCountHeaderTooltips.Add(target);
-        AddRawTooltip(target, "Shown as active/building/other.\nBuilding uses total(foreign contracts).\nActive: afloat and available.\nOther: refit, repair, mothball, or otherwise unavailable.");
+        return null;
     }
 
     private static void AddRawTooltip(GameObject ui, string content)
@@ -1219,6 +1473,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
             {
                 EnsureDesignViewerToolbar(__instance);
                 EnsureDesignShipCountHeaderTooltip(__instance);
+                EnsureDesignPowerHeader(__instance);
                 RefreshViewedDesigns(__instance, !IsViewingForeignDesigns);
             }
             else
@@ -1230,6 +1485,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
                 return;
             }
 
+            DesignPowerTextCache.Clear();
             foreach (var element in __instance.designUiByShip)
             {
                 FleetWindow_ShipElementUI ui = element.Value;
@@ -1241,9 +1497,12 @@ internal static class CampaignFleetWindowDesignViewerPatch
                 Player designPlayer = GetCurrentDesignViewerPlayer();
                 SetDesignShipCountText(ui, designPlayer, ship);
                 SetDesignRowNameText(ui, ship);
+                SetDesignPowerText(ui, ship);
 
                 if (ui.Year != null)
                     ui.Year.text = $"{ShipDesignYear(ship)}";
+
+                NormalizeDesignRowLayout(ui);
 
                 if (__instance.selectedElements.Count > 0 && __instance.selectedElements[0] == ui)
                     UpdateDesignSelectionActions(__instance, designPlayer, ship, !IsViewingForeignDesigns);

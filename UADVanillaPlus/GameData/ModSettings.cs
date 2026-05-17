@@ -9,7 +9,12 @@ namespace UADVanillaPlus.GameData;
 internal static class ModSettings
 {
     private const string PortStrikeBalancedKey = "uadvp_port_strike_balanced";
+    private const string AiFleetCompositionModeKey = "uadvp_ai_fleet_composition_mode";
+    private const string AiArmsRaceModeKey = "uadvp_ai_arms_race_mode";
+    private const string AiArmsRaceEnabledKey = "uadvp_ai_arms_race_enabled";
     private const string BattleWeatherAlwaysSunnyKey = "uadvp_battle_weather_always_sunny";
+    private const string BattleSpottingRangeModeKey = "uadvp_battle_spotting_range_mode";
+    private const string BattleDamageModeKey = "uadvp_battle_damage_mode";
     private const string DesignAccuracyPenaltyModeKey = "uadvp_design_accuracy_penalty_mode";
     private const string MajorShipTorpedoesRestrictedKey = "uadvp_major_ship_torpedoes_restricted";
     private const string ObsoleteDesignRetentionEnabledKey = "uadvp_obsolete_design_retention_enabled";
@@ -26,7 +31,11 @@ internal static class ModSettings
     private const string OldPanamaCanalEarlyEnabledKey = "uadvp_panama_canal_early_enabled";
 
     private static bool? portStrikeBalanced;
+    private static AiFleetCompositionMode? aiFleetCompositionMode;
+    private static AiArmsRaceMode? aiArmsRaceMode;
     private static bool? battleWeatherAlwaysSunny;
+    private static BattleSpottingRangeMode? battleSpottingRangeMode;
+    private static BattleDamageMode? battleDamageMode;
     private static AccuracyPenaltyMode? designAccuracyPenaltyMode;
     private static bool? majorShipTorpedoesRestricted;
     private static bool? obsoleteDesignRetentionEnabled;
@@ -49,12 +58,44 @@ internal static class ModSettings
         Vanilla = 1,
     }
 
+    internal enum BattleSpottingRangeMode
+    {
+        Vanilla = 1,
+        X3 = 3,
+        X5 = 5,
+        X10 = 10,
+    }
+
+    internal enum BattleDamageMode
+    {
+        Vanilla = 1,
+        X2 = 2,
+        X3 = 3,
+        X5 = 5,
+    }
+
+    internal enum AiFleetCompositionMode
+    {
+        Vanilla = 0,
+        Balanced = 1,
+        Heavy = 2,
+    }
+
+    internal enum AiArmsRaceMode
+    {
+        Disabled = 0,
+        Loose35 = 35,
+        Standard60 = 60,
+        Strict75 = 75,
+    }
+
     internal enum TechnologySpreadMode
     {
         Vanilla = 0,
         Gradual = 1,
         Swift = 2,
         Unrestricted = 3,
+        Historical = 4,
     }
 
     internal static bool PortStrikeBalanced
@@ -68,6 +109,39 @@ internal static class ModSettings
             Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Port Strike mode {(value ? "Balanced" : "Vanilla")}.");
             LogCurrentSettings("after Port Strike change");
         }
+    }
+
+    internal static AiFleetCompositionMode AiFleetComposition
+    {
+        get => aiFleetCompositionMode ??= LoadAiFleetCompositionMode();
+        set
+        {
+            aiFleetCompositionMode = value;
+            PlayerPrefs.SetInt(AiFleetCompositionModeKey, (int)value);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: AI Fleet Mix mode {AiFleetCompositionModeText(value)}.");
+            LogCurrentSettings("after AI Fleet Mix change");
+        }
+    }
+
+    internal static AiArmsRaceMode AiArmsRace
+    {
+        get => aiArmsRaceMode ??= LoadAiArmsRaceMode();
+        set
+        {
+            aiArmsRaceMode = value;
+            PlayerPrefs.SetInt(AiArmsRaceModeKey, (int)value);
+            PlayerPrefs.SetInt(AiArmsRaceEnabledKey, value == AiArmsRaceMode.Disabled ? 0 : 1);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: AI Arms Race mode {AiArmsRaceModeText(value)}.");
+            LogCurrentSettings("after AI Arms Race change");
+        }
+    }
+
+    internal static bool AiArmsRaceEnabled
+    {
+        get => AiArmsRace != AiArmsRaceMode.Disabled;
+        set => AiArmsRace = value ? AiArmsRaceMode.Standard60 : AiArmsRaceMode.Disabled;
     }
 
     internal static bool BattleWeatherAlwaysSunny
@@ -90,15 +164,15 @@ internal static class ModSettings
         {
             if (AccuracyPenaltyBalance.IsBattleOrLoading())
             {
-                Melon<UADVanillaPlusMod>.Logger.Warning("UADVP option: Accuracy Penalties cannot be changed while a battle is loading or active.");
+                Melon<UADVanillaPlusMod>.Logger.Warning("UADVP option: Crew & Accuracy Balance cannot be changed while a battle is loading or active.");
                 return;
             }
 
             designAccuracyPenaltyMode = value;
             PlayerPrefs.SetInt(DesignAccuracyPenaltyModeKey, (int)value);
             PlayerPrefs.Save();
-            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Design Accuracy Penalties mode {AccuracyPenaltyModeText(value)}.");
-            LogCurrentSettings("after Accuracy Penalties change");
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Crew & Accuracy Balance mode {AccuracyPenaltyModeText(value)}.");
+            LogCurrentSettings("after Crew & Accuracy Balance change");
             AccuracyPenaltyBalance.TryReapplyLoadedStats(value);
         }
     }
@@ -113,6 +187,33 @@ internal static class ModSettings
             PlayerPrefs.Save();
             Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: CA+ Torpedoes mode {(value ? "Disallowed" : "Vanilla")}.");
             LogCurrentSettings("after CA+ Torpedoes change");
+        }
+    }
+
+    internal static BattleSpottingRangeMode BattleSpottingRange
+    {
+        get => battleSpottingRangeMode ??= LoadBattleSpottingRangeMode();
+        set
+        {
+            battleSpottingRangeMode = value;
+            PlayerPrefs.SetInt(BattleSpottingRangeModeKey, (int)value);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Battle Spotting mode {BattleSpottingRangeModeText(value)}.");
+            LogCurrentSettings("after Battle Spotting change");
+        }
+    }
+
+    internal static BattleDamageMode BattleDamage
+    {
+        get => battleDamageMode ??= LoadBattleDamageMode();
+        set
+        {
+            battleDamageMode = value;
+            PlayerPrefs.SetInt(BattleDamageModeKey, (int)value);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Battle Damage mode {BattleDamageModeText(value)}.");
+            LogCurrentSettings("after Battle Damage change");
+            BattleDamageBalance.ApplyCurrentSetting("option change");
         }
     }
 
@@ -273,8 +374,49 @@ internal static class ModSettings
     internal static float AccuracyPenaltyDivisor(AccuracyPenaltyMode mode)
         => mode == AccuracyPenaltyMode.Vanilla ? 1f : (float)mode;
 
+    internal static float BattleSpottingRangeMultiplier(BattleSpottingRangeMode mode)
+        => mode == BattleSpottingRangeMode.Vanilla ? 1f : (float)mode;
+
+    internal static float BattleDamageMultiplier(BattleDamageMode mode)
+        => mode == BattleDamageMode.Vanilla ? 1f : (float)mode;
+
     internal static string AccuracyPenaltyModeText(AccuracyPenaltyMode mode)
         => mode == AccuracyPenaltyMode.Vanilla ? "Vanilla" : $"/{(int)mode}";
+
+    internal static string BattleSpottingRangeModeText(BattleSpottingRangeMode mode)
+        => mode == BattleSpottingRangeMode.Vanilla ? "Vanilla" : $"{(int)mode}x";
+
+    internal static string BattleDamageModeText(BattleDamageMode mode)
+        => mode == BattleDamageMode.Vanilla ? "Unchanged" : $"{(int)mode}x";
+
+    internal static string AiFleetCompositionModeText(AiFleetCompositionMode mode)
+        => mode switch
+        {
+            AiFleetCompositionMode.Balanced => "Balanced",
+            AiFleetCompositionMode.Heavy => "Heavy",
+            _ => "Vanilla",
+        };
+
+    internal static float AiArmsRaceMinimumCompetitiveRatio
+        => AiArmsRace switch
+        {
+            AiArmsRaceMode.Loose35 => 0.35f,
+            AiArmsRaceMode.Standard60 => 0.60f,
+            AiArmsRaceMode.Strict75 => 0.75f,
+            _ => 0f,
+        };
+
+    internal static string AiArmsRaceModeText(AiArmsRaceMode mode)
+        => mode switch
+        {
+            AiArmsRaceMode.Loose35 => "35%",
+            AiArmsRaceMode.Standard60 => "60%",
+            AiArmsRaceMode.Strict75 => "75%",
+            _ => "Disabled",
+        };
+
+    internal static string AiArmsRaceModeText(bool enabled)
+        => AiArmsRaceModeText(enabled ? AiArmsRaceMode.Standard60 : AiArmsRaceMode.Disabled);
 
     internal static void LogCurrentSettings(string context)
     {
@@ -283,8 +425,13 @@ internal static class ModSettings
 
     private static string CurrentSettingsText()
         => $"Battle Weather={BattleWeatherModeText(BattleWeatherAlwaysSunny)}; " +
-           $"Accuracy Penalties={AccuracyPenaltyModeText(DesignAccuracyPenaltyMode)}; " +
+           $"Battle Spotting={BattleSpottingRangeModeText(BattleSpottingRange)}; " +
+           $"Battle Damage={BattleDamageModeText(BattleDamage)}; " +
+           $"Crew & Accuracy Balance={AccuracyPenaltyModeText(DesignAccuracyPenaltyMode)}; " +
            $"Port Strike={PortStrikeModeText(PortStrikeBalanced)}; " +
+           $"AI Fleet Mix={AiFleetCompositionModeText(AiFleetComposition)}; " +
+           $"AI Arms Race={AiArmsRaceModeText(AiArmsRace)}; " +
+           $"Shared Designs={CampaignSharedDesignUsageSettings.CurrentModeText()}; " +
            $"Suspend Dock Overcapacity={ShipyardCapacityModeText(ShipyardCapacityBalanced)}; " +
            $"Canal Openings={CanalOpeningModeText(EarlyCanalOpeningsEnabled)}; " +
            $"Technology Spread={TechnologySpreadModeText(TechnologySpread)}; " +
@@ -336,6 +483,7 @@ internal static class ModSettings
             TechnologySpreadMode.Gradual => "Gradual",
             TechnologySpreadMode.Swift => "Swift",
             TechnologySpreadMode.Unrestricted => "Unrestricted",
+            TechnologySpreadMode.Historical => "Historical",
             _ => "Vanilla",
         };
 
@@ -346,6 +494,43 @@ internal static class ModSettings
     {
         int stored = PlayerPrefs.GetInt(DesignAccuracyPenaltyModeKey, (int)AccuracyPenaltyMode.Div5);
         return Enum.IsDefined(typeof(AccuracyPenaltyMode), stored) ? (AccuracyPenaltyMode)stored : AccuracyPenaltyMode.Div5;
+    }
+
+    private static BattleSpottingRangeMode LoadBattleSpottingRangeMode()
+    {
+        int stored = PlayerPrefs.GetInt(BattleSpottingRangeModeKey, (int)BattleSpottingRangeMode.X3);
+        return Enum.IsDefined(typeof(BattleSpottingRangeMode), stored)
+            ? (BattleSpottingRangeMode)stored
+            : BattleSpottingRangeMode.X3;
+    }
+
+    private static BattleDamageMode LoadBattleDamageMode()
+    {
+        int stored = PlayerPrefs.GetInt(BattleDamageModeKey, (int)BattleDamageMode.X3);
+        return Enum.IsDefined(typeof(BattleDamageMode), stored)
+            ? (BattleDamageMode)stored
+            : BattleDamageMode.X3;
+    }
+
+    private static AiFleetCompositionMode LoadAiFleetCompositionMode()
+    {
+        int stored = PlayerPrefs.GetInt(AiFleetCompositionModeKey, (int)AiFleetCompositionMode.Heavy);
+        return Enum.IsDefined(typeof(AiFleetCompositionMode), stored)
+            ? (AiFleetCompositionMode)stored
+            : AiFleetCompositionMode.Heavy;
+    }
+
+    private static AiArmsRaceMode LoadAiArmsRaceMode()
+    {
+        if (!PlayerPrefs.HasKey(AiArmsRaceModeKey))
+            return PlayerPrefs.GetInt(AiArmsRaceEnabledKey, 1) == 0
+                ? AiArmsRaceMode.Disabled
+                : AiArmsRaceMode.Standard60;
+
+        int stored = PlayerPrefs.GetInt(AiArmsRaceModeKey, (int)AiArmsRaceMode.Standard60);
+        return Enum.IsDefined(typeof(AiArmsRaceMode), stored)
+            ? (AiArmsRaceMode)stored
+            : AiArmsRaceMode.Standard60;
     }
 
     private static bool LoadEarlyCanalOpeningsEnabled()

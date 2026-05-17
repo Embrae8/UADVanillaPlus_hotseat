@@ -3,6 +3,7 @@ using Il2Cpp;
 using MelonLoader;
 using UnityEngine;
 using UADVanillaPlus.GameData;
+using UADVanillaPlus.Harmony;
 
 [assembly: MelonGame("Game Labs", "Ultimate Admiral Dreadnoughts")]
 [assembly: MelonInfo(typeof(UADVanillaPlus.UADVanillaPlusMod), UADVanillaPlus.ModInfo.ShortName, UADVanillaPlus.ModInfo.MelonVersion, "GG")]
@@ -72,6 +73,12 @@ public sealed class UADVanillaPlusMod : MelonMod
 
     private void ApplicationLogMessageReceived(string condition, string stackTrace, LogType type)
     {
+        if ((type == LogType.Error || type == LogType.Exception) &&
+            CampaignAiDesignGenerationDiagnostics.TrySuppressExpectedCampaignAiShipgenFailure(condition))
+        {
+            return;
+        }
+
         string message = $"[Unity] {condition ?? string.Empty}";
         switch (type)
         {

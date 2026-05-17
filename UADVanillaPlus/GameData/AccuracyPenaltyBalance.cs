@@ -5,13 +5,14 @@ using MelonLoader;
 
 namespace UADVanillaPlus.GameData;
 
-// Balance intent: vanilla design-side accuracy penalties from smoke,
-// stability, and instability can stack into extreme values. VP changes the
-// raw stat effect text before vanilla parses it, so the game builds the toned
-// curves itself and combat accuracy calculation has no extra runtime work.
+// Balance intent: vanilla design-side accuracy penalties and crew training
+// bonuses/penalties can stack into extreme combat swings. VP changes loaded
+// data curves up front, so battle code reads normal vanilla fields and pays no
+// VP-specific per-shot cost.
 internal static class AccuracyPenaltyBalance
 {
     private sealed record AccuracyCurve(string EffectName, float First, float Second);
+    private sealed record CrewTrainingCurve(float Accuracy, float Aiming, float Reload, float DamageControl);
 
     private static readonly Dictionary<string, AccuracyCurve> VanillaAccuracyCurves = new(StringComparer.Ordinal)
     {
@@ -29,6 +30,10 @@ internal static class AccuracyPenaltyBalance
 
     private static readonly HashSet<string> LoggedStats = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, string> OriginalEffectText = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, CrewTrainingCurve> OriginalCrewTrainingCurves = new(StringComparer.Ordinal);
+    private static ModSettings.AccuracyPenaltyMode? lastAppliedCrewMode;
+    private static string? lastAppliedCrewSummary;
+    private static bool loggedMissingCrewTrainingLevels;
 
     internal static void PrepareStatForVanillaPostProcess(StatData stat)
     {
@@ -50,28 +55,89 @@ internal static class AccuracyPenaltyBalance
         string updatedEffect = EffectTermRegex.Replace(stat.effect, match => ReplaceAccuracyCurve(match, vanillaCurve, balancedCurve));
         if (updatedEffect == originalEffect)
         {
-            LogOnce(statName, $"UADVP accuracy penalties: expected {statName}.{CurveText(vanillaCurve)} was not found in '{stat.effect}'; leaving vanilla effect text.");
+            LogOnce(statName, $"UADVP crew & accuracy balance: expected {statName}.{CurveText(vanillaCurve)} was not found in '{stat.effect}'; leaving vanilla effect text.");
             return;
         }
 
         stat.effect = updatedEffect;
-        LogOnce(statName, $"UADVP accuracy penalties: {statName} {CurveText(vanillaCurve)} -> {balancedCurve}.");
+        LogOnce(statName, $"UADVP crew & accuracy balance: {statName} {CurveText(vanillaCurve)} -> {balancedCurve}.");
     }
 
     internal static bool IsBattleOrLoading()
         => GameManager.IsBattle || GameManager.IsLoadingBattle;
 
+    internal static void ApplyLoadedCrewTrainingLevels(ModSettings.AccuracyPenaltyMode mode, string reason)
+    {
+        var levels = G.GameData?.crewTrainingLevels;
+        if (levels == null)
+        {
+            if (!loggedMissingCrewTrainingLevels)
+            {
+                loggedMissingCrewTrainingLevels = true;
+                Melon<UADVanillaPlusMod>.Logger.Warning("UADVP crew & accuracy balance: crew training data is not loaded yet.");
+            }
+
+            return;
+        }
+
+        loggedMissingCrewTrainingLevels = false;
+        CaptureOriginalCrewTrainingCurves(levels);
+
+        float divisor = ModSettings.AccuracyPenaltyDivisor(mode);
+        int appliedLevels = 0;
+        List<string> sampleParts = new();
+
+        foreach (Il2CppSystem.Collections.Generic.KeyValuePair<string, CrewTrainingLevels> entry in levels)
+        {
+            CrewTrainingLevels level = entry.Value;
+            if (level == null)
+                continue;
+
+            string key = CrewTrainingKey(entry.Key, level);
+            if (!OriginalCrewTrainingCurves.TryGetValue(key, out CrewTrainingCurve? original))
+                continue;
+
+            CrewTrainingCurve balanced = new(
+                FlattenMultiplier(original.Accuracy, divisor),
+                FlattenMultiplier(original.Aiming, divisor),
+                FlattenMultiplier(original.Reload, divisor),
+                FlattenMultiplier(original.DamageControl, divisor));
+
+            level.Accuracy = balanced.Accuracy;
+            level.Aiming = balanced.Aiming;
+            level.Reload = balanced.Reload;
+            level.DamageControl = balanced.DamageControl;
+
+            if (!IsNeutralCrewCurve(original))
+                appliedLevels++;
+
+            if (IsSampleCrewLevel(key))
+                sampleParts.Add(FormatCrewSample(key, original, balanced));
+        }
+
+        string summary = $"{ModSettings.AccuracyPenaltyModeText(mode)} crew training curves to {appliedLevels} levels";
+        if (sampleParts.Count > 0)
+            summary += $" ({string.Join("; ", sampleParts)})";
+
+        if (lastAppliedCrewMode == mode && string.Equals(lastAppliedCrewSummary, summary, StringComparison.Ordinal))
+            return;
+
+        lastAppliedCrewMode = mode;
+        lastAppliedCrewSummary = summary;
+        Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP crew & accuracy balance: applied {summary} during {reason}.");
+    }
+
     internal static void TryReapplyLoadedStats(ModSettings.AccuracyPenaltyMode mode)
     {
         if (IsBattleOrLoading())
         {
-            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP accuracy penalties: live reapply skipped because a battle is loading or active.");
+            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP crew & accuracy balance: live reapply skipped because a battle is loading or active.");
             return;
         }
 
         if (G.GameData?.stats == null)
         {
-            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP accuracy penalties: live reapply deferred because game data is not loaded yet.");
+            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP crew & accuracy balance: live reapply deferred because game data is not loaded yet.");
             return;
         }
 
@@ -89,7 +155,7 @@ internal static class AccuracyPenaltyBalance
             {
                 originalEffect = RestoreVanillaEffectText(stat.effect, VanillaAccuracyCurves[statName]);
                 OriginalEffectText[statName] = originalEffect;
-                Melon<UADVanillaPlusMod>.Logger.Warning($"UADVP accuracy penalties: rebuilt original effect text for {statName} from currently loaded data.");
+                Melon<UADVanillaPlusMod>.Logger.Warning($"UADVP crew & accuracy balance: rebuilt original effect text for {statName} from currently loaded data.");
             }
 
             // Live changes rebuild the vanilla parsed effect dictionary from
@@ -101,7 +167,9 @@ internal static class AccuracyPenaltyBalance
             rebuilt++;
         }
 
-        Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP accuracy penalties: reapplied {ModSettings.AccuracyPenaltyModeText(mode)} mode to {rebuilt} loaded stat curves{(missing > 0 ? $" ({missing} missing)" : string.Empty)}.");
+        ApplyLoadedCrewTrainingLevels(mode, "live option reapply");
+
+        Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP crew & accuracy balance: reapplied {ModSettings.AccuracyPenaltyModeText(mode)} mode to {rebuilt} loaded design stat curves{(missing > 0 ? $" ({missing} missing)" : string.Empty)}.");
     }
 
     private static void RememberOriginalEffectText(string statName, string effectText, AccuracyCurve vanillaCurve)
@@ -140,8 +208,54 @@ internal static class AccuracyPenaltyBalance
     private static float DampenNegative(float value, float divisor)
         => value < 0f ? value / divisor : value;
 
+    private static float FlattenMultiplier(float value, float divisor)
+        => 1f + ((value - 1f) / divisor);
+
     private static string Format(float value)
         => value.ToString("0.###", CultureInfo.InvariantCulture);
+
+    private static void CaptureOriginalCrewTrainingCurves(Il2CppSystem.Collections.Generic.Dictionary<string, CrewTrainingLevels> levels)
+    {
+        foreach (Il2CppSystem.Collections.Generic.KeyValuePair<string, CrewTrainingLevels> entry in levels)
+        {
+            CrewTrainingLevels level = entry.Value;
+            if (level == null)
+                continue;
+
+            string key = CrewTrainingKey(entry.Key, level);
+            if (OriginalCrewTrainingCurves.ContainsKey(key))
+                continue;
+
+            OriginalCrewTrainingCurves[key] = new CrewTrainingCurve(level.Accuracy, level.Aiming, level.Reload, level.DamageControl);
+        }
+    }
+
+    private static string CrewTrainingKey(string dictionaryKey, CrewTrainingLevels level)
+    {
+        if (!string.IsNullOrWhiteSpace(dictionaryKey))
+            return dictionaryKey;
+
+        if (!string.IsNullOrWhiteSpace(level.name))
+            return level.name;
+
+        return $"level-{OriginalCrewTrainingCurves.Count + 1}";
+    }
+
+    private static bool IsNeutralCrewCurve(CrewTrainingCurve curve)
+        => Math.Abs(curve.Accuracy - 1f) <= 0.001f &&
+           Math.Abs(curve.Aiming - 1f) <= 0.001f &&
+           Math.Abs(curve.Reload - 1f) <= 0.001f &&
+           Math.Abs(curve.DamageControl - 1f) <= 0.001f;
+
+    private static bool IsSampleCrewLevel(string key)
+        => string.Equals(key, "Cadets", StringComparison.OrdinalIgnoreCase) ||
+           string.Equals(key, "Veterans", StringComparison.OrdinalIgnoreCase);
+
+    private static string FormatCrewSample(string key, CrewTrainingCurve original, CrewTrainingCurve balanced)
+        => $"{key} acc {Format(original.Accuracy)}->{Format(balanced.Accuracy)} " +
+           $"aim {Format(original.Aiming)}->{Format(balanced.Aiming)} " +
+           $"reload {Format(original.Reload)}->{Format(balanced.Reload)} " +
+           $"dc {Format(original.DamageControl)}->{Format(balanced.DamageControl)}";
 
     private static void LogOnce(string statName, string message)
     {

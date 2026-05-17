@@ -42,7 +42,9 @@ internal static class CampaignResearchDiffusionPatch
     internal static void GetResearchSpeedPostfix(Player player, Technology tech, ref float __result)
     {
         ModSettings.TechnologySpreadMode mode = ModSettings.TechnologySpread;
-        if (mode == ModSettings.TechnologySpreadMode.Vanilla || __result <= 0f)
+        if (mode == ModSettings.TechnologySpreadMode.Vanilla ||
+            mode == ModSettings.TechnologySpreadMode.Historical ||
+            __result <= 0f)
             return;
 
         try
@@ -235,7 +237,8 @@ internal static class CampaignResearchDiffusionPatch
             return;
 
         ModSettings.TechnologySpreadMode mode = ModSettings.TechnologySpread;
-        if (mode == ModSettings.TechnologySpreadMode.Vanilla)
+        if (mode == ModSettings.TechnologySpreadMode.Vanilla ||
+            mode == ModSettings.TechnologySpreadMode.Historical)
         {
             TurnSummariesByPlayer.Clear();
             return;

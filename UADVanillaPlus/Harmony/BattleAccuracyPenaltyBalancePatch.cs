@@ -1,12 +1,14 @@
 using HarmonyLib;
 using Il2Cpp;
 using UADVanillaPlus.GameData;
+using UadGameData = Il2Cpp.GameData;
 
 namespace UADVanillaPlus.Harmony;
 
-// Patch intent: tone down extreme design-side accuracy penalties at data parse
-// time. This keeps the actual battle accuracy path identical to vanilla: it
-// reads already-parsed stat curves and pays no VP-specific per-shot cost.
+// Patch intent: tone down extreme design-side accuracy penalties and crew
+// training swings at data parse time. This keeps the actual battle accuracy
+// path identical to vanilla: it reads already-parsed curves and pays no
+// VP-specific per-shot cost.
 [HarmonyPatch(typeof(StatData), nameof(StatData.PostProcess))]
 internal static class BattleAccuracyPenaltyBalancePatch
 {
@@ -14,5 +16,15 @@ internal static class BattleAccuracyPenaltyBalancePatch
     private static void PrefixPostProcess(StatData __instance)
     {
         AccuracyPenaltyBalance.PrepareStatForVanillaPostProcess(__instance);
+    }
+}
+
+[HarmonyPatch(typeof(UadGameData), "PostProcessAll")]
+internal static class CrewTrainingAccuracyBalancePatch
+{
+    [HarmonyPostfix]
+    private static void PostfixPostProcessAll()
+    {
+        AccuracyPenaltyBalance.ApplyLoadedCrewTrainingLevels(ModSettings.DesignAccuracyPenaltyMode, "game data load");
     }
 }

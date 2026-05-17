@@ -3,6 +3,7 @@ using System.Text.RegularExpressions;
 using HarmonyLib;
 using Il2Cpp;
 using MelonLoader;
+using UADVanillaPlus.GameData;
 using UnityEngine;
 
 namespace UADVanillaPlus.Harmony;
@@ -16,7 +17,7 @@ internal static class CampaignTechnologyStatusPatch
 {
     private const int MaxSaneCampaignTurn = 2400;
     private const float ResearchCompleteProgress = 100f;
-    private static readonly Regex NextDiscoverySuffixRegex = new(@"\s*\(Next \d+m\)\s*$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex NextDiscoverySuffixRegex = new(@"\s*\((?:Next \d+m|Historical)\)\s*$", RegexOptions.CultureInvariant | RegexOptions.Compiled);
     private static readonly HashSet<GameObject> TooltipTargets = new();
     private static string lastLoggedSummary = string.Empty;
     private static bool hasCachedNextDiscovery;
@@ -42,6 +43,13 @@ internal static class CampaignTechnologyStatusPatch
 
             if (!TryGetReadyCampaign(player, out _))
                 return;
+
+            if (ModSettings.TechnologySpread == ModSettings.TechnologySpreadMode.Historical)
+            {
+                __instance.Technology.text = $"{StripNextDiscoverySuffix(__instance.Technology.text)} (Historical)";
+                EnsureTooltip(__instance.Technology.gameObject);
+                return;
+            }
 
             if (!TryGetNextDiscovery(player, out DiscoveryEstimate estimate))
                 return;
@@ -210,6 +218,14 @@ internal static class CampaignTechnologyStatusPatch
         OnEnter onEnter = target.AddComponent<OnEnter>();
         onEnter.action = new System.Action(() =>
         {
+            if (ModSettings.TechnologySpread == ModSettings.TechnologySpreadMode.Historical)
+            {
+                G.ui.ShowTooltip(
+                    "Historical Research is active. Normal technologies are synchronized by historical year, and research budget spending is disabled.",
+                    target);
+                return;
+            }
+
             Player? player = PlayerController.Instance;
             string tooltip = player != null && TryGetNextDiscovery(player, out DiscoveryEstimate estimate)
                 ? $"Next technology discovery in about {estimate.Months} months.\nSoonest current research: {estimate.Name}"
