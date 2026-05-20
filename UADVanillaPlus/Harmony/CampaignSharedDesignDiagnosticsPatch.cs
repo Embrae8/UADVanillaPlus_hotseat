@@ -31,7 +31,9 @@ internal static class CampaignSharedDesignDiagnosticsPatch
     private static readonly HashSet<string> LoggedSanitizedTechs = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, List<SharedDesignGapRecord>> SharedDesignGapsByTurn = new(StringComparer.Ordinal);
     private static readonly Dictionary<string, HashSet<long>> SharedDesignGapCompletedByTurn = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> PendingSharedDesignGapSummaryTurns = new(StringComparer.Ordinal);
     private static readonly HashSet<string> LoggedSharedDesignGapSummaries = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> LoggedSharedDesignOnlyBlocks = new(StringComparer.Ordinal);
     private static string? ActiveSharedDesignGapTurn;
 
     internal static AttemptContext? BeginAttempt(CampaignController? controller, Player? player, ShipType? shipType, bool prewarming)
@@ -65,16 +67,53 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         try
         {
             CampaignAiDesignGenerationDiagnostics.RecordSharedResult(context.PlayerPointer, context.Type, result);
-            string resultText = result ? "success" : "fallback";
+            string resultText = context.OnlyFallbackBlocked
+                ? "blocked-random-fallback"
+                : result ? "success" : "fallback";
             string selected = string.IsNullOrWhiteSpace(context.SelectedDesign)
                 ? "none"
                 : context.SelectedDesign;
+            string reason = context.OnlyFallbackBlocked
+                ? "shared designs only blocked random fallback"
+                : result ? "shared design taken" : "no accepted shared design";
             Log(
-                $"{resultText} nation={context.Nation} type={context.Type} year={context.Year} advancedAiBuilder={AdvancedAiBuilderLabel()} selected={selected} reason={(result ? "shared design taken" : "no accepted shared design")}.");
+                $"{resultText} nation={context.Nation} type={context.Type} year={context.Year} advancedAiBuilder={AdvancedAiBuilderLabel()} selected={selected} reason={reason}.");
         }
         finally
         {
             PopAttempt(context);
+        }
+    }
+
+    internal static void ApplyOnlyFallbackBlock(
+        CampaignController? controller,
+        Player? player,
+        ShipType? shipType,
+        bool prewarming,
+        AttemptContext? context,
+        ref bool result)
+    {
+        if (result ||
+            context == null ||
+            prewarming ||
+            !CampaignSharedDesignUsageSettings.IsOnlyModeActive ||
+            player == null ||
+            !Safe(() => player.isAi && !player.isMain, false))
+        {
+            return;
+        }
+
+        result = true;
+        context.OnlyFallbackBlocked = true;
+
+        string turn = CurrentTurnLabel();
+        string nation = PlayerLabel(player);
+        string type = NormalizeShipType(shipType);
+        string key = $"{turn}|{NationKey(player)}|{type}";
+        if (LoggedSharedDesignOnlyBlocks.Add(key))
+        {
+            LogRaw(
+                $"[AI SharedDesign Only] blocked-random-fallback turn={LogToken(turn)} nation={LogToken(nation)} type={LogToken(type)} reason=noAcceptedSharedDesign");
         }
     }
 
@@ -125,7 +164,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
             completed.Add(PlayerPointer(player!));
             int expected = ExpectedSharedDesignGapCompletionCount(controller);
             if (expected <= 0 || completed.Count >= expected)
-                FlushSharedDesignGapSummary(turn);
+                PendingSharedDesignGapSummaryTurns.Add(turn);
         }
         catch (Exception ex)
         {
@@ -194,6 +233,29 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         ActiveSharedDesignGapTurn = turn;
     }
 
+    internal static void FlushPendingSharedDesignGapSummariesAfterNextTurn()
+    {
+        try
+        {
+            if (PendingSharedDesignGapSummaryTurns.Count == 0)
+                return;
+
+            List<string> pendingTurns = PendingSharedDesignGapSummaryTurns
+                .OrderBy(static turn => turn, StringComparer.Ordinal)
+                .ToList();
+            PendingSharedDesignGapSummaryTurns.Clear();
+
+            foreach (string pendingTurn in pendingTurns)
+                FlushSharedDesignGapSummary(pendingTurn);
+        }
+        catch (Exception ex)
+        {
+            WarnOnce(
+                "gapFlushAfterNextTurn:" + ex.GetType().Name,
+                $"shared-design deferred gap summary flush failed. {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
     private static void FlushSharedDesignGapSummary(string turn)
     {
         if (string.IsNullOrWhiteSpace(turn) || !LoggedSharedDesignGapSummaries.Add(turn))
@@ -206,12 +268,13 @@ internal static class CampaignSharedDesignDiagnosticsPatch
             .ThenBy(gap => gap.Type, StringComparer.OrdinalIgnoreCase)
             .ToList();
 
-        LogRaw($"[AI SharedDesign Gaps] turn={LogToken(turn)} entries={ordered.Count}");
+        LogGap($"[AI SharedDesign Gaps] turn={LogToken(turn)} entries={ordered.Count}");
         foreach (SharedDesignGapRecord gap in ordered)
-            LogRaw(gap.ToLogLine());
+            LogGap(gap.ToLogLine());
 
         SharedDesignGapsByTurn.Remove(turn);
         SharedDesignGapCompletedByTurn.Remove(turn);
+        PendingSharedDesignGapSummaryTurns.Remove(turn);
     }
 
     private static int ExpectedSharedDesignGapCompletionCount(CampaignController? controller)
@@ -239,6 +302,24 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         {
             return 0;
         }
+    }
+
+    internal static MethodBase? NextTurnMoveNextTarget()
+    {
+        return typeof(CampaignController)
+            .GetNestedTypes(BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            .Select(type => new
+            {
+                Type = type,
+                MoveNext = type.GetMethod("MoveNext", BindingFlags.Instance | BindingFlags.Public | BindingFlags.NonPublic)
+            })
+            .Where(candidate =>
+                candidate.MoveNext != null &&
+                candidate.Type.Name.Contains("NextTurn", StringComparison.Ordinal) &&
+                candidate.MoveNext.ReturnType == typeof(bool) &&
+                candidate.MoveNext.GetParameters().Length == 0)
+            .Select(candidate => candidate.MoveNext)
+            .FirstOrDefault();
     }
 
     private static bool IsSharedDesignGapBuildableType(Player player, ShipType? shipType)
@@ -1454,14 +1535,20 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                 actions.Add($"{GunLengthCategoryLabel(category)}:{Fmt(current)}->{Fmt(target)}");
             }
 
-            if (actions.Count == 0)
+            int techsPruned = clampedCategories.Count > 0
+                ? PruneGunLengthClampTechs(ship, clampedCategories)
+                : 0;
+            int satisfiedOrUnusedTechsPruned = PruneSatisfiedOrUnusedGunLengthTechs(ship, player, caps);
+            if (actions.Count == 0 && satisfiedOrUnusedTechsPruned <= 0)
                 return;
 
-            int techsPruned = PruneGunLengthClampTechs(ship, clampedCategories);
             RecalculateSharedDesignCandidate(ship, player);
             bool valid = Safe(() => ship.IsValid(false), false);
-            Log(
-                $"SharedDesign gun-length-clamp nation={PlayerLabel(player)} type={NormalizeShipType(ship.shipType)} design=\"{ShipLabel(ship)}\" actions={string.Join(",", actions.Select(LogToken))} techsPruned={techsPruned} valid={BoolText(valid)} result={(valid ? "continue" : "reject")} reason={(valid ? "clamped" : "validation")}.");
+            if (actions.Count > 0)
+            {
+                Log(
+                    $"SharedDesign gun-length-clamp nation={PlayerLabel(player)} type={NormalizeShipType(ship.shipType)} design=\"{ShipLabel(ship)}\" actions={string.Join(",", actions.Select(LogToken))} techsPruned={techsPruned + satisfiedOrUnusedTechsPruned} valid={BoolText(valid)} result={(valid ? "continue" : "reject")} reason={(valid ? "clamped" : "validation")}.");
+            }
         }
         catch (Exception ex)
         {
@@ -1497,6 +1584,96 @@ internal static class CampaignSharedDesignDiagnosticsPatch
             return 0;
 
         return RewriteShipActualTechs(ship, kept) ? removed : 0;
+    }
+
+    private static int PruneSatisfiedOrUnusedGunLengthTechs(Ship ship, Player player, GunLengthCaps caps)
+    {
+        List<TechnologyData> designTechs = DesignTechs(ship);
+        if (designTechs.Count == 0)
+            return 0;
+
+        if (!TryBuildLiveGunLengthSummary(ship, out Dictionary<GunLengthCategory, float> liveMaxByCategory))
+            return 0;
+
+        TechIdentitySet actual = PlayerTechIdentities(player, includeEndTechs: false);
+        List<TechnologyData> kept = new(designTechs.Count);
+        List<string> removedTechs = new();
+        foreach (TechnologyData tech in designTechs)
+        {
+            GunLengthCategory category = GunLengthCategoryForTech(tech);
+            if (category == GunLengthCategory.None ||
+                !TechHasNoComponent(tech) ||
+                actual.Contains(tech) ||
+                GunLengthTechStillRequired(category, liveMaxByCategory, caps))
+            {
+                kept.Add(tech);
+                continue;
+            }
+
+            removedTechs.Add(TechKey(tech));
+        }
+
+        if (removedTechs.Count == 0)
+            return 0;
+
+        if (!RewriteShipActualTechs(ship, kept))
+        {
+            WarnOnce(
+                "gunLengthTechPruneWrite:" + NormalizeShipType(ship.shipType),
+                $"unable to rewrite gun-length-pruned shared-design tech list for {PlayerLabel(player)} {NormalizeShipType(ship.shipType)} {ShipLabel(ship)}.");
+            return 0;
+        }
+
+        Log(
+            $"SharedDesign gun-length-tech-prune nation={PlayerLabel(player)} type={NormalizeShipType(ship.shipType)} design=\"{ShipLabel(ship)}\" removedTechs={FormatRemovedItems(removedTechs)} reason=satisfied-or-unused-length-tech result=continue.");
+        return removedTechs.Count;
+    }
+
+    private static bool TryBuildLiveGunLengthSummary(Ship ship, out Dictionary<GunLengthCategory, float> liveMaxByCategory)
+    {
+        liveMaxByCategory = new Dictionary<GunLengthCategory, float>();
+        try
+        {
+            var gunCalibers = ship.shipGunCaliber;
+            if (gunCalibers == null)
+                return false;
+
+            foreach (Ship.TurretCaliber caliber in gunCalibers)
+            {
+                if (caliber == null || Safe(() => caliber.turretPartData, null) == null)
+                    continue;
+
+                float current = Safe(() => (float)caliber.length, -1f);
+                if (current < 0f)
+                    continue;
+
+                GunLengthCategory category = GunLengthCategoryFor(caliber);
+                if (category == GunLengthCategory.None)
+                    continue;
+
+                liveMaxByCategory.TryGetValue(category, out float previous);
+                liveMaxByCategory[category] = Math.Max(previous, current);
+            }
+
+            return true;
+        }
+        catch
+        {
+            liveMaxByCategory.Clear();
+            return false;
+        }
+    }
+
+    private static bool GunLengthTechStillRequired(
+        GunLengthCategory category,
+        IReadOnlyDictionary<GunLengthCategory, float> liveMaxByCategory,
+        GunLengthCaps caps)
+    {
+        if (!liveMaxByCategory.TryGetValue(category, out float liveMax))
+            return false;
+
+        float cap = caps.For(category);
+        return liveMax > cap + 0.01f;
     }
 
     private static bool IsGunLengthClampTech(TechnologyData? tech, HashSet<GunLengthCategory> clampedCategories)
@@ -4108,7 +4285,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         => AiDesignCompetitiveness.CurrentTurnLabel();
 
     private static string SharedUsageLabel(CampaignController? controller)
-        => SafeString(() => controller?.SharedDesignsUsage.ToString());
+        => CampaignSharedDesignUsageSettings.CurrentModeText();
 
     private static string DesignUsageLabel(CampaignController? controller)
         => SafeString(() => controller?.designsUsage.ToString());
@@ -4263,6 +4440,9 @@ internal static class CampaignSharedDesignDiagnosticsPatch
     private static void LogRaw(string message)
         => Melon<UADVanillaPlusMod>.Logger.Msg(message);
 
+    private static void LogGap(string message)
+        => Melon<UADVanillaPlusMod>.Logger.Warning(message);
+
     internal sealed class AttemptContext
     {
         internal AttemptContext(
@@ -4294,6 +4474,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         internal string SharedUsage { get; }
         internal string DesignUsage { get; }
         internal string SelectedDesign { get; set; } = "none";
+        internal bool OnlyFallbackBlocked { get; set; }
     }
 
     private sealed class SharedDesignCandidate
@@ -5137,8 +5318,34 @@ internal static class CampaignSharedDesignTryTakeDiagnosticsPatch
     }
 
     [HarmonyPostfix]
-    private static void Postfix(bool __result, CampaignSharedDesignDiagnosticsPatch.AttemptContext? __state)
-        => CampaignSharedDesignDiagnosticsPatch.EndAttempt(__state, __result);
+    private static void Postfix(CampaignController __instance, Player player, ShipType shipType, bool prewarming, ref bool __result, CampaignSharedDesignDiagnosticsPatch.AttemptContext? __state)
+    {
+        CampaignSharedDesignDiagnosticsPatch.ApplyOnlyFallbackBlock(__instance, player, shipType, prewarming, __state, ref __result);
+        CampaignSharedDesignDiagnosticsPatch.EndAttempt(__state, __result);
+    }
+}
+
+[HarmonyPatch]
+internal static class CampaignSharedDesignGapNextTurnCompletionPatch
+{
+    private static bool Prepare()
+    {
+        bool available = TargetMethod() != null;
+        if (!available)
+            Melon<UADVanillaPlusMod>.Logger.Warning("[AI SharedDesign] NextTurn MoveNext target not found; deferred gap summary flush will use fallback timing.");
+
+        return available;
+    }
+
+    private static MethodBase? TargetMethod()
+        => CampaignSharedDesignDiagnosticsPatch.NextTurnMoveNextTarget();
+
+    [HarmonyPostfix]
+    private static void Postfix(bool __result)
+    {
+        if (!__result)
+            CampaignSharedDesignDiagnosticsPatch.FlushPendingSharedDesignGapSummariesAfterNextTurn();
+    }
 }
 
 [HarmonyPatch]

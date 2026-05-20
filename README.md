@@ -2,7 +2,7 @@
 
 UAD Vanilla Plus (`UAD:VP`) is a lightweight mod for Ultimate Admiral: Dreadnoughts that keeps the base game feel while adding small quality-of-life improvements.
 
-Current version: `0.5.104`
+Current version: `0.5.136`
 
 ## Philosophy
 
@@ -43,7 +43,7 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 - **Research standing markers**: show colored badges spelling out whether each research category is ahead of, behind, or tied with the leading major nation.
 - **Direct diplomacy politics actions**: add Declare War and Force Peace buttons with confirmation to campaign politics rows, with Force Peace using the vanilla reparation flow when war victory points produce a clear winner.
 - **In-game options menu**: control UAD:VP balance options from the top-right game UI.
-- **Shared design usage control**: change the active campaign's Shared Designs mode after campaign start so future AI design needs can use `Off`, `Selective`, or `Always` without starting a new campaign.
+- **Shared design usage control**: change the active campaign's Shared Designs mode after campaign start so future AI design needs can use `Off`, `Selective`, `Always`, or VP-only `Only` without starting a new campaign. `Only` blocks random AI fallback when no shared design is accepted.
 - **Shared design import adaptation**: in Advanced AI Builder's Enhanced mode, let AI shared-design imports safely downgrade armor quality, torpedo size, radio, rangefinder, steering, auxiliary-engine, and drive-shaft components, ignore safe stat-only tech baggage, and trim range or speed for slight tonnage near misses before final build validation.
 
 **Balance:**
@@ -63,6 +63,9 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 **QoL:**
 
 - **Design ship counts**: show active, building, and unavailable ships for each design.
+- **Auto Design Lite**: adds a separate designer Auto Design button that auto-places parts on the current hull without running vanilla's full spec-changing ship generator.
+- **Generate armor button**: adds a constructor action that creates a balanced armor layout from the current main guns, with a type-based fallback when no main guns are mounted.
+- **Smart new-hull defaults**: when the player picks a new hull, start from a freshly named max-range, max-tonnage, optimal-speed design with veteran crew, spacious quarters, best-available propulsion/protection components, and sensible armament defaults after the first gun is placed.
 - **Single-attempt auto design**: the designer Auto Design button now makes one generation attempt and keeps the result visible if it fails.
 - **Designs tab country viewer**: browse major AI nations' ship designs from the campaign Designs tab.
 - **Design power column**: show a compact VP effective-combat-power score in the campaign Designs tab.

@@ -11,6 +11,7 @@ internal static class ModSettings
     private const string PortStrikeBalancedKey = "uadvp_port_strike_balanced";
     private const string AiFleetCompositionModeKey = "uadvp_ai_fleet_composition_mode";
     private const string AdvancedAiBuilderEnabledKey = "uadvp_advanced_ai_builder_enabled";
+    private const string SharedDesignsOnlyModeKey = "uadvp_shared_designs_only_mode";
     private const string BattleWeatherAlwaysSunnyKey = "uadvp_battle_weather_always_sunny";
     private const string BattleSpottingRangeModeKey = "uadvp_battle_spotting_range_mode";
     private const string BattleDamageModeKey = "uadvp_battle_damage_mode";
@@ -34,6 +35,7 @@ internal static class ModSettings
     private static bool? portStrikeBalanced;
     private static AiFleetCompositionMode? aiFleetCompositionMode;
     private static bool? advancedAiBuilderEnabled;
+    private static bool? sharedDesignsOnlyMode;
     private static bool? battleWeatherAlwaysSunny;
     private static BattleSpottingRangeMode? battleSpottingRangeMode;
     private static BattleDamageMode? battleDamageMode;
@@ -163,6 +165,17 @@ internal static class ModSettings
             PlayerPrefs.Save();
             Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Advanced AI Builder mode {AdvancedAiBuilderModeText(value)}.");
             LogCurrentSettings("after Advanced AI Builder change");
+        }
+    }
+
+    internal static bool SharedDesignsOnlyMode
+    {
+        get => sharedDesignsOnlyMode ??= PlayerPrefs.GetInt(SharedDesignsOnlyModeKey, 0) != 0;
+        set
+        {
+            sharedDesignsOnlyMode = value;
+            PlayerPrefs.SetInt(SharedDesignsOnlyModeKey, value ? 1 : 0);
+            PlayerPrefs.Save();
         }
     }
 

@@ -363,11 +363,12 @@ internal static class InGameOptionsMenuPatch
                     pane.transform,
                     SharedDesignsUsageOptionName,
                     "Shared Designs",
-                    "Changes the active campaign shared-design setting for future AI designs. Existing designs are not altered, and the selected mode persists when the campaign is saved.",
+                    "Changes the active campaign shared-design setting for future AI designs. Only uses shared designs for future AI designs and blocks random AI fallback when no shared design is accepted. Existing designs are not altered.",
                     CampaignSharedDesignUsageSettings.HasActiveCampaign,
-                    ("Off", CampaignSharedDesignUsageSettings.CurrentMode == CampaignController.SharedDesignUsage.Off, () => SetSharedDesignsUsageMode(CampaignController.SharedDesignUsage.Off)),
-                    ("Selective", CampaignSharedDesignUsageSettings.CurrentMode == CampaignController.SharedDesignUsage.Selective, () => SetSharedDesignsUsageMode(CampaignController.SharedDesignUsage.Selective)),
-                    ("Always", CampaignSharedDesignUsageSettings.CurrentMode == CampaignController.SharedDesignUsage.Always, () => SetSharedDesignsUsageMode(CampaignController.SharedDesignUsage.Always)));
+                    ("Off", CampaignSharedDesignUsageSettings.CurrentPolicy == CampaignSharedDesignUsageSettings.SharedDesignPolicy.Off, () => SetSharedDesignsUsageMode(CampaignSharedDesignUsageSettings.SharedDesignPolicy.Off)),
+                    ("Selective", CampaignSharedDesignUsageSettings.CurrentPolicy == CampaignSharedDesignUsageSettings.SharedDesignPolicy.Selective, () => SetSharedDesignsUsageMode(CampaignSharedDesignUsageSettings.SharedDesignPolicy.Selective)),
+                    ("Always", CampaignSharedDesignUsageSettings.CurrentPolicy == CampaignSharedDesignUsageSettings.SharedDesignPolicy.Always, () => SetSharedDesignsUsageMode(CampaignSharedDesignUsageSettings.SharedDesignPolicy.Always)),
+                    ("Only", CampaignSharedDesignUsageSettings.CurrentPolicy == CampaignSharedDesignUsageSettings.SharedDesignPolicy.Only, () => SetSharedDesignsUsageMode(CampaignSharedDesignUsageSettings.SharedDesignPolicy.Only)));
                 AddSegmentedOption(
                     pane.transform,
                     ShipyardCapacityOptionName,
@@ -747,7 +748,7 @@ internal static class InGameOptionsMenuPatch
         RefreshLauncherButton();
     }
 
-    private static void SetSharedDesignsUsageMode(CampaignController.SharedDesignUsage mode)
+    private static void SetSharedDesignsUsageMode(CampaignSharedDesignUsageSettings.SharedDesignPolicy mode)
     {
         CampaignSharedDesignUsageSettings.TrySetMode(mode);
         RefreshMenu();
