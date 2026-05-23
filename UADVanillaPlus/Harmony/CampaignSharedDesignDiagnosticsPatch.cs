@@ -13,6 +13,7 @@ namespace UADVanillaPlus.Harmony;
 internal static class CampaignSharedDesignDiagnosticsPatch
 {
     private const string LogPrefix = "[AI SharedDesign]";
+    private const string DebugLogPrefix = "[AI SharedDesign Debug]";
     private const int MaxRejectDetails = 6;
     private const int MaxMissingTechDetails = 24;
     private const int MaxUnlockDetails = 20;
@@ -254,6 +255,18 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                 "gapFlushAfterNextTurn:" + ex.GetType().Name,
                 $"shared-design deferred gap summary flush failed. {ex.GetType().Name}: {ex.Message}");
         }
+    }
+
+    internal static void ResetTurnScopedSharedDesignDiagnostics(string context)
+    {
+        ActiveAttempts.Clear();
+        SharedDesignGapsByTurn.Clear();
+        SharedDesignGapCompletedByTurn.Clear();
+        PendingSharedDesignGapSummaryTurns.Clear();
+        LoggedSharedDesignGapSummaries.Clear();
+        LoggedSharedDesignOnlyBlocks.Clear();
+        ActiveSharedDesignGapTurn = null;
+        Log($"reset turn-scoped diagnostics context={LogToken(context)}.");
     }
 
     private static void FlushSharedDesignGapSummary(string turn)
@@ -501,6 +514,356 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         }
     }
 
+    internal static bool BlockDuplicateSharedDesignResult(
+        Player? player,
+        ShipType? shipType,
+        int year,
+        SharedDesignBookSnapshot? existingDesigns,
+        ref Ship? result)
+    {
+        if (result == null || player == null || existingDesigns == null)
+            return false;
+
+        try
+        {
+            if (!TryFindExistingSharedDesign(existingDesigns, result, null, out SharedDesignDuplicateMatch duplicate))
+                return false;
+
+            string candidateSummary = ShipSummary(result);
+            string existingSummary = ShipSummary(duplicate.Existing);
+            LogDuplicateSkip(player, result, null, duplicate);
+            int erased = EraseDuplicateSharedDesignCopies(player, result, existingDesigns);
+            TryErase(result);
+            result = null;
+
+            Log(
+                $"vanilla-duplicate-block nation={PlayerLabel(player)} type={NormalizeShipType(shipType)} year={year} candidate={candidateSummary} existing={existingSummary} reason={duplicate.Reason} erased={erased} fingerprintHash={FingerprintHash(duplicate.Fingerprint)} result=rejected.");
+            return true;
+        }
+        catch (Exception ex)
+        {
+            WarnOnce(
+                "vanillaDuplicateBlock:" + ex.GetType().Name,
+                $"shared-design vanilla duplicate guard failed for {PlayerLabel(player)} {NormalizeShipType(shipType)} {year}. {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    internal static bool ApplyPostCleanupSharedDesignAcceptanceGate(
+        Player? player,
+        ShipType? shipType,
+        int year,
+        SharedDesignBookSnapshot? existingDesigns,
+        Ship.Store? sourceStore,
+        ref Ship? result)
+    {
+        if (result == null)
+            return false;
+        if (player == null || existingDesigns == null)
+            return true;
+
+        try
+        {
+            Ship candidate = result;
+            string type = NormalizeShipType(candidate.shipType);
+            string candidateFingerprint = SharedDesignFingerprint(candidate, sourceStore);
+            Il2CppSystem.Guid sourceId = CandidateSharedDesignId(candidate, sourceStore);
+
+            if (TryFindSnapshotDesign(existingDesigns, candidate, out SharedDesignExistingDesign existingSnapshot))
+            {
+                LogPostCleanupDuplicateBlock(
+                    player,
+                    type,
+                    year,
+                    candidate,
+                    existingSnapshot.Ship,
+                    "snapshotResult",
+                    candidateFingerprint,
+                    existingSnapshot.Fingerprint,
+                    sourceId,
+                    erased: 0);
+                result = null;
+                return false;
+            }
+
+            SharedDesignExistingDesign? sameBaseVariant = null;
+            SharedDesignVariantMatch sourceVariant = SharedDesignVariantMatch.None;
+            if (TryFindExistingSharedDesign(existingDesigns, candidate, sourceStore, out SharedDesignDuplicateMatch sharedDuplicate, out sourceVariant))
+            {
+                LogDuplicateSkip(player, candidate, sourceStore, sharedDuplicate);
+                LogPostCleanupDuplicateBlock(
+                    player,
+                    type,
+                    year,
+                    candidate,
+                    sharedDuplicate.Existing,
+                    "finalFingerprint",
+                    candidateFingerprint,
+                    sharedDuplicate.Fingerprint,
+                    sourceId,
+                    erased: 1);
+                TryErase(candidate);
+                result = null;
+                return false;
+            }
+
+            foreach (SharedDesignExistingDesign existing in existingDesigns.Designs)
+            {
+                if (!CanComparePostCleanupRosterDesign(existing, candidate, type))
+                    continue;
+
+                string existingFingerprint = existing.Fingerprint;
+                bool sameFingerprint = string.Equals(existingFingerprint, candidateFingerprint, StringComparison.Ordinal);
+                bool sameBaseName = string.Equals(
+                    SharedDesignBaseName(ShipLabel(existing.Ship)),
+                    SharedDesignBaseName(ShipLabel(candidate)),
+                    StringComparison.OrdinalIgnoreCase);
+
+                if (sameFingerprint)
+                {
+                    string reason = sameBaseName ? "sameVisibleFamily" : "finalFingerprint";
+                    TryErase(candidate);
+                    result = null;
+                    LogPostCleanupDuplicateBlock(
+                        player,
+                        type,
+                        year,
+                        candidate,
+                        existing.Ship,
+                        reason,
+                        candidateFingerprint,
+                        existingFingerprint,
+                        sourceId,
+                        erased: 1);
+                    return false;
+                }
+
+                if (sameBaseName && sameBaseVariant == null)
+                    sameBaseVariant = existing;
+            }
+
+            if (!CandidatePassesTop3SharedDesignGate(player, candidate, year, existingDesigns))
+            {
+                TryErase(candidate);
+                result = null;
+                return false;
+            }
+
+            if (sameBaseVariant != null)
+            {
+                ApplyPostCleanupSharedDesignVariantName(
+                    player,
+                    candidate,
+                    sourceStore,
+                    existingDesigns,
+                    "sameBaseMaterialVariant",
+                    sourceId,
+                    sameBaseVariant.Fingerprint,
+                    candidateFingerprint);
+            }
+            else if (sourceVariant.IsVariant)
+            {
+                ApplyPostCleanupSharedDesignVariantName(
+                    player,
+                    candidate,
+                    sourceStore,
+                    existingDesigns,
+                    "sameSourceMaterialVariant",
+                    sourceVariant.SourceId,
+                    sourceVariant.ExistingFingerprint,
+                    candidateFingerprint);
+            }
+            else
+            {
+                NormalizeImportedSharedDesignIdentity(player, candidate, sourceStore);
+            }
+
+            result = candidate;
+            return true;
+        }
+        catch (Exception ex)
+        {
+            WarnOnce(
+                "postCleanupSharedGate:" + ex.GetType().Name,
+                $"post-cleanup shared-design acceptance gate failed for {PlayerLabel(player)} {NormalizeShipType(shipType)} {year}. {ex.GetType().Name}: {ex.Message}");
+            return true;
+        }
+    }
+
+    private static bool CanComparePostCleanupRosterDesign(SharedDesignExistingDesign existing, Ship candidate, string candidateType)
+    {
+        if (existing.Ship == null ||
+            ReferenceEquals(existing.Ship, candidate) ||
+            Safe(() => existing.Ship.isErased, true))
+        {
+            return false;
+        }
+
+        long candidatePointer = Safe(() => candidate.Pointer.ToInt64(), 0L);
+        if (candidatePointer != 0L && existing.Pointer == candidatePointer)
+            return false;
+
+        return string.Equals(existing.Type, candidateType, StringComparison.OrdinalIgnoreCase);
+    }
+
+    private static bool TryFindSnapshotDesign(SharedDesignBookSnapshot existingDesigns, Ship candidate, out SharedDesignExistingDesign snapshot)
+    {
+        long candidatePointer = Safe(() => candidate.Pointer.ToInt64(), 0L);
+        foreach (SharedDesignExistingDesign existing in existingDesigns.Designs)
+        {
+            if (existing.Ship == null)
+                continue;
+
+            if (ReferenceEquals(existing.Ship, candidate) ||
+                (candidatePointer != 0L && existing.Pointer == candidatePointer))
+            {
+                snapshot = existing;
+                return true;
+            }
+        }
+
+        snapshot = null!;
+        return false;
+    }
+
+    private static bool CandidatePassesTop3SharedDesignGate(
+        Player player,
+        Ship candidate,
+        int year,
+        SharedDesignBookSnapshot existingDesigns)
+    {
+        string type = NormalizeShipType(candidate.shipType);
+        List<CampaignAiDesignRosterPrunePatch.RosterDesign> existing = existingDesigns.Designs
+            .Where(existing => existing.Ship != null &&
+                               !Safe(() => existing.Ship.isErased, true) &&
+                               string.Equals(existing.Type, type, StringComparison.OrdinalIgnoreCase) &&
+                               Safe(() => existing.Ship.isDesign || existing.Ship.isRefitDesign, false))
+            .Select(existing => CampaignAiDesignRosterPrunePatch.BuildRosterDesign(existing.Ship))
+            .ToList();
+
+        CampaignAiDesignRosterPrunePatch.RosterDesign candidateRank = CampaignAiDesignRosterPrunePatch.BuildRosterDesign(candidate);
+        List<CampaignAiDesignRosterPrunePatch.RosterDesign> currentTop = CampaignAiDesignRosterPrunePatch
+            .RankDesigns(existing)
+            .Take(CampaignAiDesignRosterPrunePatch.MaxDesignsPerType)
+            .ToList();
+
+        if (existing.Count < CampaignAiDesignRosterPrunePatch.MaxDesignsPerType)
+        {
+            LogTop3SharedDesignAccept(player, type, year, candidateRank, "none", currentTop);
+            return true;
+        }
+
+        List<CampaignAiDesignRosterPrunePatch.RosterDesign> combinedTop = CampaignAiDesignRosterPrunePatch
+            .RankDesigns(existing.Append(candidateRank))
+            .Take(CampaignAiDesignRosterPrunePatch.MaxDesignsPerType)
+            .ToList();
+        bool candidateInTop = combinedTop.Any(entry => ReferenceEquals(entry.Ship, candidate));
+        CampaignAiDesignRosterPrunePatch.RosterDesign worstCurrent = currentTop.LastOrDefault();
+        if (!candidateInTop)
+        {
+            Log(
+                $"top3-shared-design-reject nation={PlayerLabel(player)} type={type} year={year} candidate={ShipLabel(candidate)} candidateAdjustedPower={ShipEffectivePowerCalculator.FormatCompactPower(candidateRank.AdjustedPower)} worstTop3={LogToken(worstCurrent.Name)} worstAdjustedPower={ShipEffectivePowerCalculator.FormatCompactPower(worstCurrent.AdjustedPower)} keptTop3={FormatTop3Roster(currentTop)}.");
+            return false;
+        }
+
+        LogTop3SharedDesignAccept(player, type, year, candidateRank, CampaignAiDesignRosterPrunePatch.FormatRosterDesignCompact(worstCurrent), combinedTop);
+        return true;
+    }
+
+    private static void LogTop3SharedDesignAccept(
+        Player player,
+        string type,
+        int year,
+        CampaignAiDesignRosterPrunePatch.RosterDesign candidate,
+        string displaces,
+        IReadOnlyList<CampaignAiDesignRosterPrunePatch.RosterDesign> keptTop3)
+    {
+        Log(
+            $"top3-shared-design-accept nation={PlayerLabel(player)} type={type} year={year} candidate={candidate.Name} candidateAdjustedPower={ShipEffectivePowerCalculator.FormatCompactPower(candidate.AdjustedPower)} displaces={displaces} keptTop3={FormatTop3Roster(keptTop3)}.");
+    }
+
+    private static string FormatTop3Roster(IReadOnlyList<CampaignAiDesignRosterPrunePatch.RosterDesign> designs)
+        => designs.Count == 0
+            ? "none"
+            : string.Join(",", designs.Select(CampaignAiDesignRosterPrunePatch.FormatRosterDesignCompact));
+
+    private static void LogPostCleanupDuplicateBlock(
+        Player player,
+        string type,
+        int year,
+        Ship candidate,
+        Ship? existing,
+        string reason,
+        string candidateFingerprint,
+        string existingFingerprint,
+        Il2CppSystem.Guid sourceId,
+        int erased)
+    {
+        Log(
+            $"post-cleanup-duplicate-block nation={PlayerLabel(player)} type={type} year={year} candidate={ShipLabel(candidate)} existing={ShipLabel(existing)} reason={reason} candidateFingerprintHash={FingerprintHash(candidateFingerprint)} existingFingerprintHash={FingerprintHash(existingFingerprint)} sourceId={GuidText(sourceId)} erased={erased}.");
+    }
+
+    private static void ApplyPostCleanupSharedDesignVariantName(
+        Player player,
+        Ship candidate,
+        Ship.Store? sourceStore,
+        SharedDesignBookSnapshot existingDesigns,
+        string reason,
+        Il2CppSystem.Guid sourceId,
+        string existingFingerprint,
+        string candidateFingerprint)
+    {
+        string baseName = SharedDesignBaseName(ShipLabel(candidate));
+        string variantName = ApplySharedDesignVariantName(player, candidate, existingDesigns, baseName);
+        NormalizeImportedSharedDesignIdentity(player, candidate, sourceStore, forceNewId: true, reason: reason);
+        Log(
+            $"post-cleanup-variant-name nation={PlayerLabel(player)} type={NormalizeShipType(candidate.shipType)} base=\"{baseName}\" variant=\"{variantName}\" reason={reason} sourceId={GuidText(sourceId)} existingFingerprintHash={FingerprintHash(existingFingerprint)} candidateFingerprintHash={FingerprintHash(candidateFingerprint)}.");
+    }
+
+    private static int EraseDuplicateSharedDesignCopies(Player player, Ship duplicateResult, SharedDesignBookSnapshot existingDesigns)
+    {
+        string duplicateFingerprint = SharedDesignFingerprint(duplicateResult, null);
+        string duplicateType = NormalizeShipType(duplicateResult.shipType);
+        int erased = 0;
+
+        foreach (Ship design in SafeShipList(player.designs))
+        {
+            if (design == null ||
+                Safe(() => design.isErased, false) ||
+                IsDesignFromSnapshot(existingDesigns, design) ||
+                !string.Equals(NormalizeShipType(design.shipType), duplicateType, StringComparison.OrdinalIgnoreCase) ||
+                !IsSharedDesign(design))
+            {
+                continue;
+            }
+
+            Ship.Store? store = SafeToStore(design);
+            string fingerprint = SharedDesignFingerprint(design, store);
+            if (!string.Equals(fingerprint, duplicateFingerprint, StringComparison.Ordinal))
+                continue;
+
+            TryErase(design);
+            erased++;
+        }
+
+        return erased;
+    }
+
+    private static bool IsDesignFromSnapshot(SharedDesignBookSnapshot existingDesigns, Ship design)
+    {
+        long pointer = Safe(() => design.Pointer.ToInt64(), 0L);
+        foreach (SharedDesignExistingDesign existing in existingDesigns.Designs)
+        {
+            if (ReferenceEquals(existing.Ship, design) ||
+                (pointer != 0L && existing.Pointer == pointer))
+            {
+                return true;
+            }
+        }
+
+        return false;
+    }
+
     internal static void FinalizeAcceptedSharedDesignBlueprint(
         Player? player,
         ShipType? shipType,
@@ -625,6 +988,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                     }
 
                     summary.AddReject(ShipSummary(ship, store, player), validation.Stage, validation.Reason);
+                    LogTechRejectDetail(player, requestedShipType, ship, store, checkTech, validation.Stage, validation.Reason, validation.BuildReason);
                     TryErase(ship);
                     continue;
                 }
@@ -649,6 +1013,52 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         }
 
         return summary;
+    }
+
+    private static void LogTechRejectDetail(
+        Player player,
+        ShipType? requestedShipType,
+        Ship? ship,
+        Ship.Store? store,
+        bool checkTech,
+        string stage,
+        string reason,
+        string buildReason = "none")
+    {
+        if (!string.Equals(stage, "tech", StringComparison.OrdinalIgnoreCase))
+            return;
+
+        string liveName = ShipLabel(ship);
+        string storeName = SafeString(() => store?.vesselName);
+        string type = CandidateTypeLabel(requestedShipType, ship, store);
+        string details = ship == null
+            ? StoreSummary(store)
+            : $"{ShipDateDetails(ship, store)} {BuildNumericDetails(ship, player)}";
+        int effectiveYear = ship == null ? Safe(() => store?.YearCreated ?? 0, 0) : ShipYear(ship);
+
+        LogDebug(
+            $"tech-reject nation={PlayerLabel(player)} key={NationKey(player)} type={type} design=\"{liveName}\" storeDesign=\"{storeName}\" effectiveYear={effectiveYear} checkTech={checkTech.ToString().ToLowerInvariant()} stage={LogToken(stage)} buildReason={LogToken(buildReason)} reason={FormatRejectReason(reason)} {details}.");
+    }
+
+    private static string CandidateTypeLabel(ShipType? requestedShipType, Ship? ship, Ship.Store? store)
+    {
+        string shipType = NormalizeShipType(Safe(() => ship?.shipType, null));
+        if (!string.IsNullOrWhiteSpace(shipType) &&
+            !string.Equals(shipType, "<empty>", StringComparison.Ordinal) &&
+            !string.Equals(shipType, "?", StringComparison.Ordinal))
+        {
+            return shipType;
+        }
+
+        string requested = NormalizeShipType(requestedShipType);
+        if (!string.IsNullOrWhiteSpace(requested) &&
+            !string.Equals(requested, "<empty>", StringComparison.Ordinal) &&
+            !string.Equals(requested, "?", StringComparison.Ordinal))
+        {
+            return requested;
+        }
+
+        return NormalizeShipType(SafeString(() => store?.shipType));
     }
 
     private static Ship? FindRelaxedSharedDesignCandidate(
@@ -692,18 +1102,11 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                     continue;
                 }
 
-                if (TryFindExistingSharedDesign(existingDesigns, ship, store, out SharedDesignDuplicateMatch duplicate, out SharedDesignVariantMatch variant))
-                {
-                    LogDuplicateSkip(player, ship, store, duplicate);
-                    TryErase(ship);
+                Ship? gatedShip = ship;
+                if (!ApplyPostCleanupSharedDesignAcceptanceGate(player, requestedShipType, year, existingDesigns, store, ref gatedShip))
                     continue;
-                }
 
-                if (variant.IsVariant)
-                    ApplySharedDesignVariant(player, ship, store, existingDesigns, variant);
-                else
-                    NormalizeImportedSharedDesignIdentity(player, ship, store);
-                return ship;
+                return gatedShip;
             }
             catch
             {
@@ -3335,9 +3738,11 @@ internal static class CampaignSharedDesignDiagnosticsPatch
             List<TechnologyData> kept = new(designTechs.Count);
             int removedGlobal = 0;
             List<string> ignoredStatTechs = new();
+            List<string> removedClassScopedTechs = new();
             int keptUsed = 0;
             int keptKnown = 0;
             int keptUnknown = 0;
+            string designType = NormalizeShipType(ship.shipType);
 
             foreach (TechnologyData tech in designTechs)
             {
@@ -3376,6 +3781,12 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                     continue;
                 }
 
+                if (IsUnusedClassScopedSharedDesignTech(tech, designType, out string classScopeDetail))
+                {
+                    removedClassScopedTechs.Add(classScopeDetail);
+                    continue;
+                }
+
                 if (IsUnusedGlobalSharedDesignTech(tech))
                 {
                     removedGlobal++;
@@ -3386,7 +3797,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                 keptUnknown++;
             }
 
-            if (removedGlobal <= 0 && ignoredStatTechs.Count <= 0)
+            if (removedGlobal <= 0 && ignoredStatTechs.Count <= 0 && removedClassScopedTechs.Count <= 0)
                 return;
 
             if (!RewriteShipActualTechs(ship, kept))
@@ -3397,11 +3808,11 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                 return;
             }
 
-            string key = $"{PlayerPointer(player)}:{NormalizeShipType(ship.shipType)}:{ShipLabel(ship)}:{ShipYear(ship)}:{removedGlobal}:{ignoredStatTechs.Count}:{kept.Count}";
+            string key = $"{PlayerPointer(player)}:{NormalizeShipType(ship.shipType)}:{ShipLabel(ship)}:{ShipYear(ship)}:{removedGlobal}:{ignoredStatTechs.Count}:{removedClassScopedTechs.Count}:{kept.Count}";
             if (LoggedSanitizedTechs.Add(key))
             {
                 Log(
-                    $"sanitized-techs nation={PlayerLabel(player)} type={NormalizeShipType(ship.shipType)} design={ShipLabel(ship)} removedGlobal={removedGlobal} ignoredStatTechs={FormatRemovedItems(ignoredStatTechs)} keptUsed={keptUsed} keptKnown={keptKnown} keptUnknown={keptUnknown} result=continue.");
+                    $"sanitized-techs nation={PlayerLabel(player)} type={NormalizeShipType(ship.shipType)} design={ShipLabel(ship)} removedGlobal={removedGlobal} removedClassScoped={FormatRemovedItems(removedClassScopedTechs)} ignoredStatTechs={FormatRemovedItems(ignoredStatTechs)} keptUsed={keptUsed} keptKnown={keptKnown} keptUnknown={keptUnknown} result=continue.");
             }
         }
         catch (Exception ex)
@@ -3447,6 +3858,84 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         return string.IsNullOrWhiteSpace(component) ||
                string.Equals(component, "<empty>", StringComparison.Ordinal);
     }
+
+    private static bool IsUnusedClassScopedSharedDesignTech(TechnologyData? tech, string designType, out string detail)
+    {
+        detail = string.Empty;
+        if (tech == null)
+            return false;
+
+        if (!IsRecognizedShipClass(designType))
+            return false;
+
+        string component = SafeString(() => tech.component);
+        if (!string.IsNullOrWhiteSpace(component) && !string.Equals(component, "<empty>", StringComparison.Ordinal))
+            return false;
+
+        HashSet<string> scopedTypes = ClassScopesForTechEffect(tech);
+        if (scopedTypes.Count == 0 || scopedTypes.Contains(designType))
+            return false;
+
+        string scopes = string.Join("+", scopedTypes.OrderBy(type => type, StringComparer.OrdinalIgnoreCase).Select(type => type.ToLowerInvariant()));
+        detail = $"{TechKey(tech)}:scope={scopes}:ship={designType.ToLowerInvariant()}";
+        return true;
+    }
+
+    private static HashSet<string> ClassScopesForTechEffect(TechnologyData tech)
+    {
+        HashSet<string> result = new(StringComparer.OrdinalIgnoreCase);
+        string effect = SafeString(() => tech.effect);
+        if (string.IsNullOrWhiteSpace(effect) || string.Equals(effect, "<empty>", StringComparison.Ordinal))
+            return result;
+
+        int searchFrom = 0;
+        while (searchFrom < effect.Length)
+        {
+            int open = effect.IndexOf('(', searchFrom);
+            if (open < 0)
+                break;
+
+            int close = effect.IndexOf(')', open + 1);
+            if (close < 0)
+                break;
+
+            string args = effect.Substring(open + 1, close - open - 1);
+            foreach (string rawToken in args.Split(new[] { ';', ',', ' ', '\t' }, StringSplitOptions.RemoveEmptyEntries))
+            {
+                if (TryNormalizeShipClassToken(rawToken, out string shipClass))
+                    result.Add(shipClass);
+            }
+
+            searchFrom = close + 1;
+        }
+
+        return result;
+    }
+
+    private static bool TryNormalizeShipClassToken(string? rawToken, out string shipClass)
+    {
+        shipClass = string.Empty;
+        if (string.IsNullOrWhiteSpace(rawToken))
+            return false;
+
+        string token = rawToken.Trim().Trim('"', '\'', '[', ']', '(', ')').ToLowerInvariant();
+        shipClass = token switch
+        {
+            "bb" or "battleship" or "battleships" => "BB",
+            "bc" or "battlecruiser" or "battlecruisers" => "BC",
+            "ca" or "heavy_cruiser" or "heavycruiser" or "heavy_cruisers" or "heavycruisers" => "CA",
+            "cl" or "light_cruiser" or "lightcruiser" or "light_cruisers" or "lightcruisers" => "CL",
+            "dd" or "destroyer" or "destroyers" => "DD",
+            "tb" or "torpedo_boat" or "torpedoboat" or "torpedo_boats" or "torpedoboats" => "TB",
+            "ss" or "sub" or "submarine" or "submarines" => "SS",
+            _ => string.Empty,
+        };
+
+        return shipClass.Length > 0;
+    }
+
+    private static bool IsRecognizedShipClass(string? shipType)
+        => shipType is "BB" or "BC" or "CA" or "CL" or "DD" or "TB" or "SS";
 
     private static bool IsUnusedSubmarineBaggageTech(TechnologyData? tech)
     {
@@ -4437,6 +4926,9 @@ internal static class CampaignSharedDesignDiagnosticsPatch
     private static void Log(string message)
         => Melon<UADVanillaPlusMod>.Logger.Msg($"{LogPrefix} {message}");
 
+    private static void LogDebug(string message)
+        => Melon<UADVanillaPlusMod>.Logger.Msg($"{DebugLogPrefix} {message}");
+
     private static void LogRaw(string message)
         => Melon<UADVanillaPlusMod>.Logger.Msg(message);
 
@@ -5320,8 +5812,9 @@ internal static class CampaignSharedDesignTryTakeDiagnosticsPatch
     [HarmonyPostfix]
     private static void Postfix(CampaignController __instance, Player player, ShipType shipType, bool prewarming, ref bool __result, CampaignSharedDesignDiagnosticsPatch.AttemptContext? __state)
     {
+        bool vanillaResult = __result;
         CampaignSharedDesignDiagnosticsPatch.ApplyOnlyFallbackBlock(__instance, player, shipType, prewarming, __state, ref __result);
-        CampaignSharedDesignDiagnosticsPatch.EndAttempt(__state, __result);
+        CampaignSharedDesignDiagnosticsPatch.EndAttempt(__state, vanillaResult);
     }
 }
 
@@ -5346,6 +5839,14 @@ internal static class CampaignSharedDesignGapNextTurnCompletionPatch
         if (!__result)
             CampaignSharedDesignDiagnosticsPatch.FlushPendingSharedDesignGapSummariesAfterNextTurn();
     }
+}
+
+[HarmonyPatch(typeof(CampaignController), nameof(CampaignController.OnLoadingScreenHide))]
+internal static class CampaignSharedDesignGapLoadResetPatch
+{
+    [HarmonyPostfix]
+    private static void Postfix()
+        => CampaignSharedDesignDiagnosticsPatch.ResetTurnScopedSharedDesignDiagnostics("campaign load");
 }
 
 [HarmonyPatch]
@@ -5389,7 +5890,9 @@ internal static class CampaignSharedDesignGetSharedDesignDiagnosticsPatch
         ref Ship? __result)
     {
         CampaignSharedDesignDiagnosticsPatch.ApplyRelaxedSharedDesignTechMatch(__instance, player, shipType, year, checkTech, isEarlySavedShip, __state, ref __result);
+        CampaignSharedDesignDiagnosticsPatch.BlockDuplicateSharedDesignResult(player, shipType, year, __state, ref __result);
         CampaignSharedDesignDiagnosticsPatch.FinalizeAcceptedSharedDesignBlueprint(player, shipType, checkTech, isEarlySavedShip, __result);
+        CampaignSharedDesignDiagnosticsPatch.ApplyPostCleanupSharedDesignAcceptanceGate(player, shipType, year, __state, null, ref __result);
         CampaignSharedDesignDiagnosticsPatch.NormalizeImportedSharedDesignDate(__instance, player, shipType, year, checkTech, isEarlySavedShip, __result);
         CampaignSharedDesignDiagnosticsPatch.TraceGetSharedDesignResult(player, shipType, year, __result);
     }

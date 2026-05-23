@@ -2,7 +2,7 @@
 
 UAD Vanilla Plus (`UAD:VP`) is a lightweight mod for Ultimate Admiral: Dreadnoughts that keeps the base game feel while adding small quality-of-life improvements.
 
-Current version: `0.5.136`
+Current version: `0.5.203`
 
 ## Philosophy
 
@@ -51,7 +51,9 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 - **Port Strike balance**: scales transport losses from undefended port strikes by attacker tonnage instead of allowing small raiders to destroy large transport groups.
 - **AI Fleet Mix**: optional `Vanilla`, `Balanced`, and `Heavy` modes adjust AI surface-ship construction weights and, outside vanilla mode, favor the most under-target valid surface types. This defaults to `Heavy`.
 - **Advanced AI Builder**: default-on `Enhanced` mode lets VP help AI design books with shared-design blueprint adaptation, missing-type recovery, and stale-design refreshes; `Vanilla` keeps the game's original design-generation cadence and exact shared-design checks.
+- **Smart Refits**: default-on `Enhanced` mode replaces vanilla AI random refits with VP's conservative refit pass and adds a player-only `Smart Refit` constructor button; `Vanilla` restores the game's original AI refit path and hides the VP button.
 - **Suspend Dock Overcapacity**: automatically delays lower-priority repairs, builds, and refits when monthly dock work exceeds shipyard capacity; manual mode keeps vanilla overcapacity handling.
+- **Foreign port shipbuilding capacity**: controlled non-home ports can contribute 50% of their normal port-capacity share to national shipbuilding capacity, with a `Vanilla` toggle in the UAD:VP options menu.
 - **Canal openings**: optional setting to open the Panama and Kiel canals from 1890 when a campaign map loads, matching early-campaign canals such as Suez; historical mode keeps vanilla's 1914 and 1895 opening years.
 - **Technology Spread**: optional `Gradual`, `Swift`, and `Unrestricted` modes that help major nations catch up faster in research categories where they trail the current leader. `Historical` grants every major nation all normal technologies by historical year and disables research spending while leaving repeatable end-techs vanilla. This defaults to vanilla.
 - **Campaign End Date**: optional setting to disable vanilla's forced 1965 retirement so campaigns can continue past the normal end date. This defaults to enabled.

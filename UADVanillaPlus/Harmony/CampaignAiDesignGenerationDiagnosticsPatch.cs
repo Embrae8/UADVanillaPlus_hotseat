@@ -912,6 +912,9 @@ internal static class CampaignAiDesignGenerationDiagnostics
         if (design == null || Safe(() => design.isErased, true))
             return false;
 
+        if (CampaignSmartRefitPatch.IsBlockedAiRefitDesign(design))
+            return false;
+
         return Safe(() => design.isDesign || design.isRefitDesign, false);
     }
 

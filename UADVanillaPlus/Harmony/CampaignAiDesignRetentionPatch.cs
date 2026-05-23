@@ -75,6 +75,9 @@ internal static class CampaignAiDesignRetentionPatch
         if (design == null || Safe(() => design.isErased, true))
             return false;
 
+        if (CampaignSmartRefitPatch.IsBlockedAiRefitDesign(design))
+            return false;
+
         if (!Safe(() => design.isDesign || design.isRefitDesign, false))
             return false;
 

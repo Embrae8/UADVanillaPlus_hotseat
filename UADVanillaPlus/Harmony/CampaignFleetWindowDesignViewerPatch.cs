@@ -581,7 +581,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
 
         foreach (Ship ship in player.GetFleetAll())
         {
-            if (ship == null || ship.design != design)
+            if (ship == null || !SameShipIdentity(ship.design, design))
                 continue;
 
             AddShipStateToCounts(ship, ref counts);
@@ -924,7 +924,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
             return;
 
         DesignPowerHeaderTooltips.Add(powerObject);
-        AddRawTooltip(powerObject, "Estimated combat power from vanilla Ship.EstimatePower.\nApproximate internal score; use as a sanity-check aid.");
+        AddRawTooltip(powerObject, "Estimated combat power from UAD:VP adjusted power.\nApproximate score using weapons, armor, speed, and cost; use as a sanity-check aid.");
     }
 
     private static void EnsureDesignShipCountHeaderTooltip(CampaignFleetWindow window)
@@ -988,11 +988,19 @@ internal static class CampaignFleetWindowDesignViewerPatch
 
         void AddDesignCandidate(Ship ship, bool requireShips)
         {
-            if (ship == null || (!ship.isDesign && !ship.isRefitDesign) || sortedDesigns.Contains(ship))
+            if (ship == null || sortedDesigns.Any(existing => SameShipIdentity(existing, ship)))
                 return;
 
             DesignShipCounts counts = GetDesignShipCounts(player, ship);
-            if ((ship.isErased || requireShips) && counts.Total == 0)
+            if (requireShips)
+            {
+                if (counts.Total == 0 || ship.shipType == null)
+                    return;
+            }
+            else if (!ship.isDesign && !ship.isRefitDesign)
+                return;
+
+            if (ship.isErased && counts.Total == 0)
                 return;
 
             sortedDesigns.Add(ship);
@@ -1015,6 +1023,41 @@ internal static class CampaignFleetWindowDesignViewerPatch
             designs.Add(ship);
 
         return designs;
+    }
+
+    private static bool SameShipIdentity(Ship a, Ship b)
+    {
+        if (a == null || b == null)
+            return false;
+
+        try
+        {
+            if (a.Pointer == b.Pointer)
+                return true;
+        }
+        catch
+        {
+        }
+
+        string left = ShipIdentity(a);
+        string right = ShipIdentity(b);
+        return !string.IsNullOrWhiteSpace(left) &&
+               !string.IsNullOrWhiteSpace(right) &&
+               !string.Equals(left, "<null>", StringComparison.OrdinalIgnoreCase) &&
+               string.Equals(left, right, StringComparison.Ordinal);
+    }
+
+    private static string ShipIdentity(Ship ship)
+    {
+        try
+        {
+            return ship?.id.ToString() ?? "<null>";
+        }
+        catch
+        {
+            try { return ship?.Pointer.ToString() ?? "<null>"; }
+            catch { return "<null>"; }
+        }
     }
 
     private static int CompareDesignsByDefaultClassOrder(Ship a, Ship b)
@@ -1524,27 +1567,6 @@ internal static class CampaignFleetWindowDesignViewerPatch
             catch
             {
             }
-        }
-    }
-}
-
-[HarmonyPatch(typeof(CampaignController))]
-internal static class CampaignControllerDesignViewerDeletePatch
-{
-    [HarmonyPatch(nameof(CampaignController.DeleteDesign))]
-    [HarmonyPrefix]
-    private static void PrefixDeleteDesign(ref Ship ship)
-    {
-        Ship selected = CampaignFleetWindowDesignViewerPatch.SelectedViewedDesign;
-        CampaignFleetWindow window = G.ui?.FleetWindow;
-        if (selected == null || window == null || ship == selected)
-            return;
-
-        if (window.selectedElements != null &&
-            window.selectedElements.Count > 0 &&
-            window.selectedElements[0]?.CurrentShip == selected)
-        {
-            ship = selected;
         }
     }
 }

@@ -35,10 +35,12 @@ internal static class InGameOptionsMenuPatch
     private const string AiFleetCompositionOptionName = "UADVP_Option_AiFleetComposition";
     private const string AdvancedAiBuilderOptionName = "UADVP_Option_AdvancedAiBuilder";
     private const string SharedDesignsUsageOptionName = "UADVP_Option_SharedDesignsUsage";
+    private const string SmartRefitsOptionName = "UADVP_Option_SmartRefits";
     private const string MajorShipTorpedoesOptionName = "UADVP_Option_MajorShipTorpedoes";
     private const string ObsoleteDesignRetentionOptionName = "UADVP_Option_ObsoleteDesignRetention";
     private const string SuperstructureRefitsOptionName = "UADVP_Option_SuperstructureRefits";
     private const string ShipyardCapacityOptionName = "UADVP_Option_ShipyardCapacity";
+    private const string ForeignPortCapacityOptionName = "UADVP_Option_ForeignPortCapacity";
     private const string CampaignMapWraparoundOptionName = "UADVP_Option_CampaignMapWraparound";
     private const string CanalOpeningsOptionName = "UADVP_Option_CanalOpenings";
     private const string TechnologySpreadOptionName = "UADVP_Option_TechnologySpread";
@@ -371,12 +373,28 @@ internal static class InGameOptionsMenuPatch
                     ("Only", CampaignSharedDesignUsageSettings.CurrentPolicy == CampaignSharedDesignUsageSettings.SharedDesignPolicy.Only, () => SetSharedDesignsUsageMode(CampaignSharedDesignUsageSettings.SharedDesignPolicy.Only)));
                 AddSegmentedOption(
                     pane.transform,
+                    SmartRefitsOptionName,
+                    "Smart Refits",
+                    "Enhanced replaces vanilla AI random refits with VP's conservative refit pass and enables the player Smart Refit constructor button. Vanilla restores the game's original AI refit path and hides the VP button.",
+                    true,
+                    ("Enhanced", ModSettings.SmartRefitsEnabled, () => SetSmartRefitsMode(true)),
+                    ("Vanilla", !ModSettings.SmartRefitsEnabled, () => SetSmartRefitsMode(false)));
+                AddSegmentedOption(
+                    pane.transform,
                     ShipyardCapacityOptionName,
                     "Suspend Dock Overcapacity",
                     "Automatic temporarily suspends lower-priority repairs, builds, and refits during the monthly advance when dock work exceeds shipyard capacity. Manual keeps vanilla behavior, where players must manage overcapacity themselves and the game applies its global over-capacity time penalty.",
                     true,
                     ("Automatic", ModSettings.ShipyardCapacityBalanced, () => SetShipyardCapacityMode(true)),
                     ("Manual", !ModSettings.ShipyardCapacityBalanced, () => SetShipyardCapacityMode(false)));
+                AddSegmentedOption(
+                    pane.transform,
+                    ForeignPortCapacityOptionName,
+                    "Foreign Port Capacity",
+                    "50% lets controlled non-home ports contribute half of their normal port-capacity share to national shipbuilding capacity. Vanilla counts only home ports.",
+                    true,
+                    ("50%", ModSettings.ForeignPortCapacity == ModSettings.ForeignPortCapacityMode.Half, () => SetForeignPortCapacityMode(ModSettings.ForeignPortCapacityMode.Half)),
+                    ("Vanilla", ModSettings.ForeignPortCapacity == ModSettings.ForeignPortCapacityMode.Vanilla, () => SetForeignPortCapacityMode(ModSettings.ForeignPortCapacityMode.Vanilla)));
                 AddSegmentedOption(
                     pane.transform,
                     CanalOpeningsOptionName,
@@ -755,6 +773,15 @@ internal static class InGameOptionsMenuPatch
         RefreshLauncherButton();
     }
 
+    private static void SetSmartRefitsMode(bool enabled)
+    {
+        if (ModSettings.SmartRefitsEnabled != enabled)
+            ModSettings.SmartRefitsEnabled = enabled;
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
     private static void SetMajorShipTorpedoesMode(bool restricted)
     {
         if (ModSettings.MajorShipTorpedoesRestricted != restricted)
@@ -806,6 +833,18 @@ internal static class InGameOptionsMenuPatch
         {
             ModSettings.CampaignMapWraparoundEnabled = enabled;
             CampaignMapWrapVisualPatch.ApplyCurrentSetting();
+        }
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
+    private static void SetForeignPortCapacityMode(ModSettings.ForeignPortCapacityMode mode)
+    {
+        if (ModSettings.ForeignPortCapacity != mode)
+        {
+            ModSettings.ForeignPortCapacity = mode;
+            RefreshCampaignCostUi("Foreign Port Capacity mode change");
         }
 
         RefreshMenu();
@@ -1042,7 +1081,7 @@ internal static class InGameOptionsMenuPatch
     }
 
     private static bool AnyBalanceOptionEnabled()
-        => ModSettings.BattleWeatherAlwaysSunny || ModSettings.BattleSpottingRange != ModSettings.BattleSpottingRangeMode.Vanilla || ModSettings.BattleDamage != ModSettings.BattleDamageMode.Vanilla || ModSettings.RealisticShellDamageEnabled || ModSettings.DesignAccuracyPenaltiesBalanced || ModSettings.PortStrikeBalanced || ModSettings.AiFleetComposition != ModSettings.AiFleetCompositionMode.Vanilla || ModSettings.AdvancedAiBuilderEnabled || ModSettings.MajorShipTorpedoesRestricted || ModSettings.ObsoleteDesignRetentionEnabled || ModSettings.SuperstructureRefitsEnabled || ModSettings.ShipyardCapacityBalanced || ModSettings.EarlyCanalOpeningsEnabled || ModSettings.TechnologySpread != ModSettings.TechnologySpreadMode.Vanilla || !ModSettings.CampaignEndDateEnabled || ModSettings.MineWarfareDisabled || ModSettings.SubmarineWarfareDisabled || ModSettings.CampaignMapWraparoundEnabled || ModSettings.ExperimentalNationShipPaintsEnabled;
+        => ModSettings.BattleWeatherAlwaysSunny || ModSettings.BattleSpottingRange != ModSettings.BattleSpottingRangeMode.Vanilla || ModSettings.BattleDamage != ModSettings.BattleDamageMode.Vanilla || ModSettings.RealisticShellDamageEnabled || ModSettings.DesignAccuracyPenaltiesBalanced || ModSettings.PortStrikeBalanced || ModSettings.AiFleetComposition != ModSettings.AiFleetCompositionMode.Vanilla || ModSettings.AdvancedAiBuilderEnabled || ModSettings.SmartRefitsEnabled || ModSettings.MajorShipTorpedoesRestricted || ModSettings.ObsoleteDesignRetentionEnabled || ModSettings.SuperstructureRefitsEnabled || ModSettings.ShipyardCapacityBalanced || ModSettings.ForeignPortCapacity != ModSettings.ForeignPortCapacityMode.Vanilla || ModSettings.EarlyCanalOpeningsEnabled || ModSettings.TechnologySpread != ModSettings.TechnologySpreadMode.Vanilla || !ModSettings.CampaignEndDateEnabled || ModSettings.MineWarfareDisabled || ModSettings.SubmarineWarfareDisabled || ModSettings.CampaignMapWraparoundEnabled || ModSettings.ExperimentalNationShipPaintsEnabled;
 
     private static void AddLauncherTooltip(GameObject buttonObject)
         => AddTooltip(
@@ -1051,7 +1090,7 @@ internal static class InGameOptionsMenuPatch
             () => launcherButton != null && launcherButton.interactable);
 
     private static string LauncherTooltipText()
-        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nRealistic Shell Damage: {RealisticShellDamageModeText(ModSettings.RealisticShellDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAdvanced AI Builder: {AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}\nBattle Runtime Diagnostics: {BattleRuntimeDiagnosticsModeText(ModSettings.BattleRuntimeDiagnosticsEnabled)}";
+        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nRealistic Shell Damage: {RealisticShellDamageModeText(ModSettings.RealisticShellDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAdvanced AI Builder: {AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSmart Refits: {SmartRefitsModeText(ModSettings.SmartRefitsEnabled)}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nForeign Port Capacity: {ForeignPortCapacityModeText(ModSettings.ForeignPortCapacity)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}\nBattle Runtime Diagnostics: {BattleRuntimeDiagnosticsModeText(ModSettings.BattleRuntimeDiagnosticsEnabled)}";
 
     private static void AddTooltip(GameObject target, string text, Func<bool>? canShow = null)
         => AddTooltip(target, () => text, canShow);
@@ -1220,6 +1259,9 @@ internal static class InGameOptionsMenuPatch
     private static string AdvancedAiBuilderModeText(bool enabled)
         => ModSettings.AdvancedAiBuilderModeText(enabled);
 
+    private static string SmartRefitsModeText(bool enabled)
+        => ModSettings.SmartRefitsModeText(enabled);
+
     private static string DesignAccuracyPenaltiesModeText(ModSettings.AccuracyPenaltyMode mode)
         => ModSettings.AccuracyPenaltyModeText(mode);
 
@@ -1243,6 +1285,9 @@ internal static class InGameOptionsMenuPatch
 
     private static string ShipyardCapacityModeText(bool balanced)
         => balanced ? "Automatic" : "Manual";
+
+    private static string ForeignPortCapacityModeText(ModSettings.ForeignPortCapacityMode mode)
+        => ModSettings.ForeignPortCapacityModeText(mode);
 
     private static string CanalOpeningModeText(bool early)
         => ModSettings.CanalOpeningModeText(early);

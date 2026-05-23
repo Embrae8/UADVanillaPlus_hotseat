@@ -12,6 +12,7 @@ internal static class ModSettings
     private const string AiFleetCompositionModeKey = "uadvp_ai_fleet_composition_mode";
     private const string AdvancedAiBuilderEnabledKey = "uadvp_advanced_ai_builder_enabled";
     private const string SharedDesignsOnlyModeKey = "uadvp_shared_designs_only_mode";
+    private const string SmartRefitsEnabledKey = "uadvp_smart_refits_enabled";
     private const string BattleWeatherAlwaysSunnyKey = "uadvp_battle_weather_always_sunny";
     private const string BattleSpottingRangeModeKey = "uadvp_battle_spotting_range_mode";
     private const string BattleDamageModeKey = "uadvp_battle_damage_mode";
@@ -21,6 +22,7 @@ internal static class ModSettings
     private const string ObsoleteDesignRetentionEnabledKey = "uadvp_obsolete_design_retention_enabled";
     private const string SuperstructureRefitsEnabledKey = "uadvp_superstructure_refits_enabled";
     private const string ShipyardCapacityBalancedKey = "uadvp_shipyard_capacity_balanced";
+    private const string ForeignPortCapacityModeKey = "uadvp_foreign_port_capacity_mode";
     private const string MineWarfareDisabledKey = "uadvp_mine_warfare_disabled";
     private const string SubmarineWarfareDisabledKey = "uadvp_submarine_warfare_disabled";
     private const string CampaignMapWraparoundEnabledKey = "uadvp_campaign_map_wraparound_enabled";
@@ -36,6 +38,7 @@ internal static class ModSettings
     private static AiFleetCompositionMode? aiFleetCompositionMode;
     private static bool? advancedAiBuilderEnabled;
     private static bool? sharedDesignsOnlyMode;
+    private static bool? smartRefitsEnabled;
     private static bool? battleWeatherAlwaysSunny;
     private static BattleSpottingRangeMode? battleSpottingRangeMode;
     private static BattleDamageMode? battleDamageMode;
@@ -45,6 +48,7 @@ internal static class ModSettings
     private static bool? obsoleteDesignRetentionEnabled;
     private static bool? superstructureRefitsEnabled;
     private static bool? shipyardCapacityBalanced;
+    private static ForeignPortCapacityMode? foreignPortCapacity;
     private static bool? mineWarfareDisabled;
     private static bool? submarineWarfareDisabled;
     private static bool? campaignMapWraparoundEnabled;
@@ -107,6 +111,12 @@ internal static class ModSettings
         Swift = 2,
         Unrestricted = 3,
         Historical = 4,
+    }
+
+    internal enum ForeignPortCapacityMode
+    {
+        Vanilla = 0,
+        Half = 50,
     }
 
     internal static bool PortStrikeBalanced
@@ -176,6 +186,19 @@ internal static class ModSettings
             sharedDesignsOnlyMode = value;
             PlayerPrefs.SetInt(SharedDesignsOnlyModeKey, value ? 1 : 0);
             PlayerPrefs.Save();
+        }
+    }
+
+    internal static bool SmartRefitsEnabled
+    {
+        get => smartRefitsEnabled ??= PlayerPrefs.GetInt(SmartRefitsEnabledKey, 1) != 0;
+        set
+        {
+            smartRefitsEnabled = value;
+            PlayerPrefs.SetInt(SmartRefitsEnabledKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Smart Refits mode {SmartRefitsModeText(value)}.");
+            LogCurrentSettings("after Smart Refits change");
         }
     }
 
@@ -302,6 +325,19 @@ internal static class ModSettings
             PlayerPrefs.Save();
             Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Suspend Dock Overcapacity mode {(value ? "Automatic" : "Manual")}.");
             LogCurrentSettings("after Suspend Dock Overcapacity change");
+        }
+    }
+
+    internal static ForeignPortCapacityMode ForeignPortCapacity
+    {
+        get => foreignPortCapacity ??= LoadForeignPortCapacityMode();
+        set
+        {
+            foreignPortCapacity = value;
+            PlayerPrefs.SetInt(ForeignPortCapacityModeKey, (int)value);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Foreign Port Capacity mode {ForeignPortCapacityModeText(value)}.");
+            LogCurrentSettings("after Foreign Port Capacity change");
         }
     }
 
@@ -447,6 +483,9 @@ internal static class ModSettings
     internal static bool RealisticShellDamageEnabled
         => RealisticShellDamage == RealisticShellDamageMode.Realistic;
 
+    internal static float ForeignPortCapacityMultiplier(ForeignPortCapacityMode mode)
+        => mode == ForeignPortCapacityMode.Half ? 0.5f : 0f;
+
     internal static string AccuracyPenaltyModeText(AccuracyPenaltyMode mode)
         => mode == AccuracyPenaltyMode.Vanilla ? "Vanilla" : $"/{(int)mode}";
 
@@ -485,6 +524,12 @@ internal static class ModSettings
     internal static string AdvancedAiBuilderModeText(bool enabled)
         => enabled ? "Enhanced" : "Vanilla";
 
+    internal static string SmartRefitsModeText(bool enabled)
+        => enabled ? "Enhanced" : "Vanilla";
+
+    internal static string ForeignPortCapacityModeText(ForeignPortCapacityMode mode)
+        => mode == ForeignPortCapacityMode.Half ? "50%" : "Vanilla";
+
     internal static void LogCurrentSettings(string context)
     {
         Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP settings ({context}): {CurrentSettingsText()}.");
@@ -500,7 +545,9 @@ internal static class ModSettings
            $"AI Fleet Mix={AiFleetCompositionModeText(AiFleetComposition)}; " +
            $"Advanced AI Builder={AdvancedAiBuilderModeText(AdvancedAiBuilderEnabled)}; " +
            $"Shared Designs={CampaignSharedDesignUsageSettings.CurrentModeText()}; " +
+           $"Smart Refits={SmartRefitsModeText(SmartRefitsEnabled)}; " +
            $"Suspend Dock Overcapacity={ShipyardCapacityModeText(ShipyardCapacityBalanced)}; " +
+           $"Foreign Port Capacity={ForeignPortCapacityModeText(ForeignPortCapacity)}; " +
            $"Canal Openings={CanalOpeningModeText(EarlyCanalOpeningsEnabled)}; " +
            $"Technology Spread={TechnologySpreadModeText(TechnologySpread)}; " +
            $"Campaign End Date={CampaignEndDateModeText(CampaignEndDateEnabled)}; " +
@@ -614,6 +661,14 @@ internal static class ModSettings
         return Enum.IsDefined(typeof(TechnologySpreadMode), stored)
             ? (TechnologySpreadMode)stored
             : TechnologySpreadMode.Vanilla;
+    }
+
+    private static ForeignPortCapacityMode LoadForeignPortCapacityMode()
+    {
+        int stored = PlayerPrefs.GetInt(ForeignPortCapacityModeKey, (int)ForeignPortCapacityMode.Half);
+        return Enum.IsDefined(typeof(ForeignPortCapacityMode), stored)
+            ? (ForeignPortCapacityMode)stored
+            : ForeignPortCapacityMode.Half;
     }
 
     private static string NationShipPaintPreferenceKey(string nationKey)

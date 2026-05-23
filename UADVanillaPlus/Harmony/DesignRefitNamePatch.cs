@@ -16,6 +16,9 @@ internal static class DesignRefitNamePatch
     private static readonly Regex RefitYearNameRegex = new(
         @"^\s*(?<base>.*?)\s*\((?<year>\d{4})(?<letter>[A-Za-z]*)\)\s*(?:-\s*(?<number>\d+))?\s*$",
         RegexOptions.CultureInvariant | RegexOptions.Compiled);
+    private static readonly Regex GeneratedNationTagRegex = new(
+        @"^(?<base>.*?)[\s_]*\[(?<tag>[A-Za-z][A-Za-z _-]{1,32})\]\s*_?\s*$",
+        RegexOptions.CultureInvariant | RegexOptions.Compiled);
 
     private static bool loggedRule;
     private static bool loggedConflict;
@@ -78,6 +81,9 @@ internal static class DesignRefitNamePatch
         return highestOrdinal + 1;
     }
 
+    internal static string CleanRefitBaseNameForVp(Ship? ship)
+        => CleanRefitBaseName(ship);
+
     private static string CleanRefitBaseName(Ship? ship)
     {
         string? name = ship?.name;
@@ -125,7 +131,7 @@ internal static class DesignRefitNamePatch
 
     private static string StripLeadingShipTypePrefix(string baseName, Ship? ship)
     {
-        string cleaned = baseName.Trim();
+        string cleaned = TrimGeneratedSeparators(StripGeneratedNationTag(baseName));
         foreach (string typeCode in ShipTypeCodes(ship))
         {
             if (!IsCompactShipTypeCode(typeCode))
@@ -136,12 +142,14 @@ internal static class DesignRefitNamePatch
                 continue;
 
             char boundary = cleaned[token.Length];
-            if (!char.IsWhiteSpace(boundary) && boundary != '-' && boundary != ':')
+            if (!char.IsWhiteSpace(boundary) && boundary != '-' && boundary != ':' && boundary != '_')
                 continue;
 
-            string withoutType = cleaned[(token.Length + 1)..].TrimStart();
-            while (withoutType.Length > 0 && (withoutType[0] == '-' || withoutType[0] == ':'))
-                withoutType = withoutType[1..].TrimStart();
+            string withoutType = TrimGeneratedSeparators(cleaned[(token.Length + 1)..]);
+            while (withoutType.Length > 0 && (withoutType[0] == '-' || withoutType[0] == ':' || withoutType[0] == '_'))
+                withoutType = TrimGeneratedSeparators(withoutType[1..]);
+
+            withoutType = TrimGeneratedSeparators(StripGeneratedNationTag(withoutType));
 
             if (!string.IsNullOrWhiteSpace(withoutType))
                 return withoutType;
@@ -149,6 +157,18 @@ internal static class DesignRefitNamePatch
 
         return cleaned;
     }
+
+    private static string StripGeneratedNationTag(string name)
+    {
+        string cleaned = TrimGeneratedSeparators(name);
+        Match match = GeneratedNationTagRegex.Match(cleaned);
+        return match.Success ? TrimGeneratedSeparators(match.Groups["base"].Value) : cleaned;
+    }
+
+    private static string TrimGeneratedSeparators(string? value)
+        => string.IsNullOrWhiteSpace(value)
+            ? string.Empty
+            : value.Trim().Trim('_', '-', ':', ' ');
 
     private static IEnumerable<string> ShipTypeCodes(Ship? ship)
     {

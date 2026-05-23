@@ -47,6 +47,7 @@ internal static class SharedDesignYearInputPatch
     private static bool loggedMissingTemplate;
     private static bool loggedFlagGridAttached;
     private static bool loggedMissingFlagGridSource;
+    private static int lastLiveCampaignYear;
     private static string? flagGridSignature;
 
     internal static void RefreshConstructorUi()
@@ -116,6 +117,78 @@ internal static class SharedDesignYearInputPatch
         {
             suppressInputEvents = false;
         }
+    }
+
+    internal static void CaptureCampaignYear(CampaignController? campaign, string source)
+    {
+        int year = Safe(() => campaign!.CurrentDate.AsDate().Year, 0);
+        if (year < MinYear || year > MaxYear)
+            return;
+
+        if (lastLiveCampaignYear == year)
+            return;
+
+        lastLiveCampaignYear = year;
+        Melon<UADVanillaPlusMod>.Logger.Msg($"{LogPrefix}: captured campaign year={year} source={source}.");
+    }
+
+    internal static void CaptureActiveCampaignYear(string source)
+    {
+        if (!Safe(() => GameManager.IsCampaign, false))
+            return;
+
+        CaptureCampaignYear(CampaignController.Instance, source);
+    }
+
+    internal static int ApplyPreferredInitialSharedDesignYear(int vanillaYear)
+    {
+        int preferredYear = PreferredInitialSharedDesignYear(vanillaYear);
+        int currentYear = CurrentSharedDesignYear();
+        if (preferredYear == currentYear)
+            return preferredYear;
+
+        PlayerData? nation = CurrentSharedDesignPlayer();
+        if (nation == null || GameManager.Instance == null || G.ui == null)
+            return preferredYear;
+
+        try
+        {
+            G.ui.sharedDesignYear = preferredYear;
+            GameManager.Instance.RefreshSharedDesign(preferredYear, nation);
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"{LogPrefix}: defaulted shared-design year {currentYear}->{preferredYear} source={(IsCachedCampaignYearValid() ? "last-campaign" : "vanilla")}.");
+        }
+        catch (Exception ex)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Warning(
+                $"{LogPrefix}: failed to default shared-design year to {preferredYear}: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        return preferredYear;
+    }
+
+    internal static int PreserveCurrentYearForNewDesign(int vanillaYear, bool log)
+    {
+        int currentYear = CurrentSharedDesignYear();
+        int preservedYear = currentYear >= MinYear && currentYear <= MaxYear
+            ? currentYear
+            : Math.Clamp(vanillaYear > 0 ? vanillaYear : MinYear, MinYear, MaxYear);
+
+        try
+        {
+            if (G.ui != null)
+                G.ui.sharedDesignYear = preservedYear;
+
+            if (log)
+                Melon<UADVanillaPlusMod>.Logger.Msg($"{LogPrefix}: preserved shared-design year={preservedYear} for new design.");
+        }
+        catch (Exception ex)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Warning(
+                $"{LogPrefix}: failed to preserve shared-design year={preservedYear} for new design: {ex.GetType().Name}: {ex.Message}");
+        }
+
+        return preservedYear;
     }
 
     private static GameObject EnsureYearInput(GameObject nationYear, GameObject template)
@@ -577,6 +650,17 @@ internal static class SharedDesignYearInputPatch
         }
     }
 
+    private static int PreferredInitialSharedDesignYear(int vanillaYear)
+    {
+        if (IsCachedCampaignYearValid())
+            return lastLiveCampaignYear;
+
+        return Math.Clamp(vanillaYear > 0 ? vanillaYear : MinYear, MinYear, MaxYear);
+    }
+
+    private static bool IsCachedCampaignYearValid()
+        => lastLiveCampaignYear >= MinYear && lastLiveCampaignYear <= MaxYear;
+
     private static void RestoreVanillaSelector()
     {
         if (vanillaChooseYear != null)
@@ -692,10 +776,47 @@ internal static class SharedDesignYearInputConstructorUiPatch
 [HarmonyPatch(typeof(GameManager), nameof(GameManager.ToSharedDesignsConstructor), new[] { typeof(int), typeof(PlayerData), typeof(bool) })]
 internal static class SharedDesignYearInputEnterConstructorPatch
 {
-    [HarmonyPostfix]
-    private static void Postfix(int year)
+    [HarmonyPrefix]
+    private static void Prefix(ref int year, bool forceCreateNew)
     {
-        SharedDesignYearInputPatch.SyncYearText(year);
+        if (!forceCreateNew)
+            return;
+
+        year = SharedDesignYearInputPatch.PreserveCurrentYearForNewDesign(year, log: true);
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix(int year, bool forceCreateNew)
+    {
+        int displayYear = forceCreateNew
+            ? SharedDesignYearInputPatch.PreserveCurrentYearForNewDesign(year, log: false)
+            : SharedDesignYearInputPatch.ApplyPreferredInitialSharedDesignYear(year);
+
+        SharedDesignYearInputPatch.SyncYearText(displayYear);
         SharedDesignYearInputPatch.RefreshConstructorUi();
     }
+}
+
+[HarmonyPatch(typeof(CampaignController), "OnNewTurn")]
+internal static class SharedDesignYearInputCampaignYearNewTurnPatch
+{
+    [HarmonyPostfix]
+    private static void Postfix(CampaignController __instance)
+        => SharedDesignYearInputPatch.CaptureCampaignYear(__instance, "new-turn");
+}
+
+[HarmonyPatch(typeof(CampaignController), nameof(CampaignController.OnLoadingScreenHide))]
+internal static class SharedDesignYearInputCampaignYearLoadPatch
+{
+    [HarmonyPostfix]
+    private static void Postfix(CampaignController __instance)
+        => SharedDesignYearInputPatch.CaptureCampaignYear(__instance, "campaign-load");
+}
+
+[HarmonyPatch(typeof(GameManager), nameof(GameManager.ToMainMenu))]
+internal static class SharedDesignYearInputToMainMenuPatch
+{
+    [HarmonyPrefix]
+    private static void Prefix()
+        => SharedDesignYearInputPatch.CaptureActiveCampaignYear("to-main-menu");
 }

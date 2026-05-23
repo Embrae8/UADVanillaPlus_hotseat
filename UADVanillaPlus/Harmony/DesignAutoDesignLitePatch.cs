@@ -5,6 +5,7 @@ using HarmonyLib;
 using Il2Cpp;
 using Il2CppTMPro;
 using MelonLoader;
+using UADVanillaPlus.UserInterface;
 using UnityEngine;
 using UnityEngine.UI;
 
@@ -100,6 +101,7 @@ internal static class DesignAutoDesignLitePatch
         SetTooltip(
             buttonObject,
             "Auto-place parts on the current hull without changing tonnage, speed, beam, draught, range, armor, or components.");
+        DesignerActionButtonVisuals.Apply(buttonObject, DesignerActionButtonVisual.PartsOnly);
 
         LayoutElement? layout = buttonObject.GetComponent<LayoutElement>();
         LayoutElement? sourceLayout = source.GetComponent<LayoutElement>();

@@ -61,6 +61,29 @@ internal static class DesignNewHullDefaultsPatch
     internal static MethodBase? UiUpdateTarget()
         => AccessTools.Method(typeof(Ui), "Update", Type.EmptyTypes);
 
+    internal static string ApplySmartRefitComponentDefaults(Ship ship)
+    {
+        ComponentInstallSummary components = ApplyBestComponents(ship);
+        ArmamentInstallSummary armament = HasGun(ship)
+            ? ApplyArmamentComponents(ship)
+            : ArmamentInstallSummary.Empty;
+        EquipmentInstallSummary equipment = HasMainTower(ship)
+            ? ApplyEquipmentComponents(ship)
+            : EquipmentInstallSummary.Empty;
+        TorpedoInstallSummary torpedoes = HasTorpedoLauncher(ship)
+            ? ApplyTorpedoComponents(ship)
+            : TorpedoInstallSummary.Empty;
+
+        try { ship.CalcWeightAndCost(true, true); }
+        catch { }
+
+        return
+            $"components={components.Installed}/{components.Attempted} " +
+            $"armament={armament.Installed}/{armament.Attempted} " +
+            $"equipment={equipment.Installed}/{equipment.Attempted} " +
+            $"torpedoes={torpedoes.Installed}/{torpedoes.Attempted}";
+    }
+
     internal static void EnterUiChoosePart(PartData? part)
     {
         if (!IsHull(part) || !IsConstructor())

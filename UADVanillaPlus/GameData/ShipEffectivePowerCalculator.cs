@@ -35,6 +35,20 @@ internal readonly record struct EffectivePowerResult(
     float WeightedTorpedoAccuracyScore,
     int GunGroupCount,
     int TorpedoTubeCount,
+    float VanillaBasePower,
+    float VpWeaponPower,
+    float AdjustedGunPower,
+    float AdjustedTorpedoPower,
+    float ArmorAverageMm,
+    float VpArmorScore,
+    float TypeArmorFactor,
+    float ArmorFactor,
+    float WeaponFactor,
+    float Cost,
+    float Speed,
+    float CostFactor,
+    float SpeedFactor,
+    float VanillaFirepower,
     bool Success,
     string Reason);
 
@@ -49,6 +63,20 @@ internal readonly record struct EffectivePowerBenchmark(
 internal readonly record struct EffectivePowerMetrics(
     string Type,
     float BasePower,
+    float VanillaBasePower,
+    float VpWeaponPower,
+    float AdjustedGunPower,
+    float AdjustedTorpedoPower,
+    float ArmorAverageMm,
+    float VpArmorScore,
+    float TypeArmorFactor,
+    float ArmorFactor,
+    float WeaponFactor,
+    float Cost,
+    float Speed,
+    float CostFactor,
+    float SpeedFactor,
+    float VanillaFirepower,
     float WeightedGunReloadScore,
     float WeightedGunRangeScore,
     float WeightedGunAccuracyScore,
@@ -94,7 +122,7 @@ internal static class ShipEffectivePowerCalculator
         {
             LogFailureOnce("calculate:" + ex.GetType().Name, $"UADVP effective power: failed to calculate design power: {ex.Message}");
             string type = NormalizeShipType(design);
-            float basePower = EstimateBasePower(design);
+            float basePower = EstimateVanillaBasePower(design);
             return new EffectivePowerResult(
                 type,
                 basePower,
@@ -122,6 +150,20 @@ internal static class ShipEffectivePowerCalculator
                 0f,
                 0,
                 0,
+                basePower,
+                Math.Max(0f, SafeFloat(() => design.GetFirepower(), 0f)),
+                Math.Max(0f, SafeFloat(() => design.GetFirepower(), 0f)),
+                0f,
+                AverageHullArmorMm(design),
+                AverageHullArmorMm(design),
+                1f,
+                1f,
+                1f,
+                Math.Max(0f, SafeFloat(() => design.Cost(), 0f)),
+                Math.Max(0f, SafeFloat(() => design.speedMax, 0f)),
+                1f,
+                1f,
+                Math.Max(0f, SafeFloat(() => design.GetFirepower(), 0f)),
                 false,
                 "exception");
         }
@@ -157,6 +199,25 @@ internal static class ShipEffectivePowerCalculator
         MetricsByDesign.Clear();
         BenchmarkByType.Clear();
         CachedBenchmarkTurn = int.MinValue;
+    }
+
+    internal static void InvalidateDesignMetrics(Ship? design)
+    {
+        if (design == null)
+            return;
+
+        try
+        {
+            string prefix = DesignIdentityKey(design) + ":";
+            List<string> keys = MetricsByDesign.Keys
+                .Where(key => key.StartsWith(prefix, StringComparison.OrdinalIgnoreCase))
+                .ToList();
+            foreach (string key in keys)
+                MetricsByDesign.Remove(key);
+        }
+        catch
+        {
+        }
     }
 
     internal static bool IsSurfaceType(string type)
@@ -318,7 +379,7 @@ internal static class ShipEffectivePowerCalculator
             torpedoThreatFactor = Clamp(torpedoThreatFactor, min, max);
         }
 
-        float adjustedPower = Math.Max(0f, metrics.BasePower * gunQualityMultiplier * torpedoThreatFactor);
+        float adjustedPower = Math.Max(0f, metrics.BasePower);
         float benchmarkPower = benchmark.AdjustedPower > 0f ? benchmark.AdjustedPower : 0f;
         float ratio = benchmarkPower > 0f ? adjustedPower / benchmarkPower : 1f;
 
@@ -349,6 +410,20 @@ internal static class ShipEffectivePowerCalculator
             metrics.WeightedTorpedoAccuracyScore,
             metrics.GunGroupCount,
             metrics.TorpedoTubeCount,
+            metrics.VanillaBasePower,
+            metrics.VpWeaponPower,
+            metrics.AdjustedGunPower,
+            metrics.AdjustedTorpedoPower,
+            metrics.ArmorAverageMm,
+            metrics.VpArmorScore,
+            metrics.TypeArmorFactor,
+            metrics.ArmorFactor,
+            metrics.WeaponFactor,
+            metrics.Cost,
+            metrics.Speed,
+            metrics.CostFactor,
+            metrics.SpeedFactor,
+            metrics.VanillaFirepower,
             true,
             benchmark.SampleCount > 0 ? "ok" : "noBenchmark");
     }
@@ -421,6 +496,20 @@ internal static class ShipEffectivePowerCalculator
         EffectivePowerMetrics metrics = new(
             NormalizeShipType(type),
             0f,
+            0f,
+            1f,
+            1f,
+            0f,
+            0f,
+            1f,
+            1f,
+            1f,
+            1f,
+            0f,
+            1f,
+            1f,
+            1f,
+            0f,
             1f,
             1f,
             1f,
@@ -466,6 +555,20 @@ internal static class ShipEffectivePowerCalculator
             0f,
             0,
             0,
+            0f,
+            0f,
+            0f,
+            0f,
+            0f,
+            0f,
+            1f,
+            1f,
+            1f,
+            0f,
+            0f,
+            1f,
+            1f,
+            0f,
             false,
             reason);
     }
@@ -484,15 +587,28 @@ internal static class ShipEffectivePowerCalculator
     private static EffectivePowerMetrics BuildMetrics(Ship design)
     {
         string type = NormalizeShipType(design);
-        float basePower = EstimateBasePower(design);
-
         GunProfile guns = BuildGunProfile(design);
         TorpedoProfile torpedoes = BuildTorpedoProfile(design);
+        VpPowerInputs inputs = EstimateVpBasePower(design, guns, torpedoes);
         LogTorpedoAuditMismatchIfAny(design, torpedoes);
 
         return new EffectivePowerMetrics(
             type,
-            basePower,
+            inputs.VpBasePower,
+            inputs.VanillaBasePower,
+            inputs.VpWeaponPower,
+            inputs.AdjustedGunPower,
+            inputs.AdjustedTorpedoPower,
+            inputs.ArmorAverageMm,
+            inputs.VpArmorScore,
+            inputs.TypeArmorFactor,
+            inputs.ArmorFactor,
+            inputs.WeaponFactor,
+            inputs.Cost,
+            inputs.Speed,
+            inputs.CostFactor,
+            inputs.SpeedFactor,
+            inputs.VanillaFirepower,
             guns.ReloadScore,
             guns.RangeScore,
             guns.IntrinsicAccuracyScore,
@@ -512,6 +628,20 @@ internal static class ShipEffectivePowerCalculator
         return new EffectivePowerMetrics(
             NormalizeShipType(type),
             metrics.Average(static item => item.BasePower),
+            metrics.Average(static item => item.VanillaBasePower),
+            metrics.Average(static item => PositiveOrNeutral(item.VpWeaponPower)),
+            metrics.Average(static item => PositiveOrNeutral(item.AdjustedGunPower)),
+            metrics.Average(static item => Math.Max(0f, item.AdjustedTorpedoPower)),
+            metrics.Average(static item => Math.Max(0f, item.ArmorAverageMm)),
+            metrics.Average(static item => PositiveOrNeutral(item.VpArmorScore)),
+            metrics.Average(static item => PositiveOrNeutral(item.TypeArmorFactor)),
+            metrics.Average(static item => PositiveOrNeutral(item.ArmorFactor)),
+            metrics.Average(static item => PositiveOrNeutral(item.WeaponFactor)),
+            metrics.Average(static item => Math.Max(0f, item.Cost)),
+            metrics.Average(static item => Math.Max(0f, item.Speed)),
+            metrics.Average(static item => PositiveOrNeutral(item.CostFactor)),
+            metrics.Average(static item => PositiveOrNeutral(item.SpeedFactor)),
+            metrics.Average(static item => Math.Max(0f, item.VanillaFirepower)),
             metrics.Average(static item => PositiveOrNeutral(item.WeightedGunReloadScore)),
             metrics.Average(static item => PositiveOrNeutral(item.WeightedGunRangeScore)),
             metrics.Average(static item => PositiveOrNeutral(item.WeightedGunAccuracyScore)),
@@ -526,7 +656,50 @@ internal static class ShipEffectivePowerCalculator
             string.Empty);
     }
 
-    private static float EstimateBasePower(Ship design)
+    private static VpPowerInputs EstimateVpBasePower(Ship design, GunProfile guns, TorpedoProfile torpedoes)
+    {
+        float vanillaBasePower = EstimateVanillaBasePower(design);
+        float cost = Math.Max(1f, SafeFloat(() => design.Cost(), 1f));
+        float speed = Math.Max(1f, SafeFloat(() => design.speedMax, 1f));
+        float vanillaFirepower = Math.Max(0f, SafeFloat(() => design.GetFirepower(), 0f));
+        float armorAverage = AverageHullArmorMm(design);
+        float armorScore = VpWeightedArmorScore(design);
+        float typeArmorFactor = (float)Math.Pow(Math.Max(1f, SafeFloat(() => design.shipType.armorMax, 0f) + 1f), 1.75f);
+        float costFactor = (float)Math.Pow(cost, PowerParam("power_estimation_cost_exp", 0.6f));
+        float speedFactor = (float)Math.Pow(speed, PowerParam("power_speed_exp", 0.5f));
+        float armorFactor = (float)Math.Pow(Math.Max(0.1f, armorScore), PowerParam("power_armor_exp", 0.5f));
+
+        float adjustedGunPower = guns.AdjustedPower > 0f
+            ? guns.AdjustedPower
+            : Math.Max(1f, vanillaFirepower);
+        float adjustedTorpedoPower = torpedoes.AdjustedPower;
+        float weaponPower = Math.Max(1f, adjustedGunPower + adjustedTorpedoPower);
+        float weaponFactor = (float)Math.Pow(weaponPower, PowerParam("power_firepower_exp", 0.5f));
+        float raw = typeArmorFactor * armorFactor * speedFactor * weaponFactor;
+        float basePower = costFactor * (float)Math.Sqrt(1f + Clamp(raw, 0f, 1.0e30f) * 0.001f);
+
+        if (basePower <= 0f || float.IsNaN(basePower) || float.IsInfinity(basePower))
+            basePower = vanillaBasePower;
+
+        return new VpPowerInputs(
+            basePower,
+            vanillaBasePower,
+            weaponPower,
+            adjustedGunPower,
+            adjustedTorpedoPower,
+            armorAverage,
+            armorScore,
+            typeArmorFactor,
+            armorFactor,
+            weaponFactor,
+            cost,
+            speed,
+            costFactor,
+            speedFactor,
+            vanillaFirepower);
+    }
+
+    private static float EstimateVanillaBasePower(Ship design)
     {
         try
         {
@@ -541,12 +714,174 @@ internal static class ShipEffectivePowerCalculator
         }
     }
 
+    private static float PowerParam(string name, float fallback)
+        => SafeFloat(() => CampaignController.Param(name, fallback), fallback);
+
+    private static float AverageHullArmorMm(Ship ship)
+    {
+        try
+        {
+            var armor = ship.armor;
+            if (armor == null || armor.Count <= 0)
+                return 0f;
+
+            float total = 0f;
+            int count = 0;
+            foreach (float value in armor.Values)
+            {
+                if (value <= 0f || float.IsNaN(value) || float.IsInfinity(value))
+                    continue;
+
+                total += value;
+                count++;
+            }
+
+            return count > 0 ? total / count : 0f;
+        }
+        catch
+        {
+            return 0f;
+        }
+    }
+
+    private static float VpWeightedArmorScore(Ship ship)
+    {
+        float weighted = 0f;
+        float weights = 0f;
+
+        AddArmorScore(ship, Ship.A.Belt, 4.0f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.InnerBelt_1st, 3.0f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.InnerBelt_2nd, 2.5f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.InnerBelt_3rd, 2.0f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.ConningTower, 2.8f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.BeltBow, 1.4f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.BeltStern, 1.4f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.Deck, 0.35f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.DeckBow, 0.20f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.DeckStern, 0.20f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.InnerDeck_1st, 0.45f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.InnerDeck_2nd, 0.35f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.InnerDeck_3rd, 0.25f, ref weighted, ref weights);
+        AddArmorScore(ship, Ship.A.Superstructure, 0.20f, ref weighted, ref weights);
+        AddTurretArmorScore(ship, ref weighted, ref weights);
+
+        if (weights <= 0f)
+            return Math.Max(0.1f, AverageHullArmorMm(ship));
+
+        return Math.Max(0.1f, weighted / weights);
+    }
+
+    private static void AddArmorScore(Ship ship, Ship.A zone, float weight, ref float weighted, ref float weights)
+    {
+        float armor = ArmorMm(ship, zone);
+        if (armor <= 0f || weight <= 0f)
+            return;
+
+        weighted += armor * weight;
+        weights += weight;
+    }
+
+    private static float ArmorMm(Ship ship, Ship.A zone)
+    {
+        try
+        {
+            var armor = ship.armor;
+            if (armor != null && armor.TryGetValue(zone, out float value))
+                return Math.Max(0f, value);
+        }
+        catch
+        {
+        }
+
+        return 0f;
+    }
+
+    private static void AddTurretArmorScore(Ship ship, ref float weighted, ref float weights)
+    {
+        try
+        {
+            if (ship.shipTurretArmor == null)
+                return;
+
+            Dictionary<string, int> gunCounts = GunGroups(ship)
+                .GroupBy(group => PartDataKey(group.Data), StringComparer.OrdinalIgnoreCase)
+                .ToDictionary(group => group.Key, group => group.Sum(item => Math.Max(1, item.Count)), StringComparer.OrdinalIgnoreCase);
+
+            foreach (Ship.TurretArmor row in ship.shipTurretArmor)
+            {
+                if (row?.turretPartData == null)
+                    continue;
+
+                PartData data = row.turretPartData;
+                float caliber = CaliberInches(SafeFloat(() => data.GetCaliberInch(ship), SafeFloat(() => data.caliber, 0f)));
+                bool casemate = SafeBool(() => row.isCasemateGun);
+                int count = gunCounts.TryGetValue(PartDataKey(data), out int fromGroups) ? Math.Max(1, fromGroups) : 1;
+                float importance = GunArmorImportance(caliber, casemate) * count;
+                if (importance <= 0f)
+                    continue;
+
+                float sideWeight;
+                float topWeight;
+                float barbetteWeight;
+                if (caliber >= 9f)
+                {
+                    sideWeight = 3.0f;
+                    topWeight = 2.4f;
+                    barbetteWeight = 1.8f;
+                }
+                else if (caliber >= 6f)
+                {
+                    sideWeight = 1.5f;
+                    topWeight = 0.8f;
+                    barbetteWeight = 0.9f;
+                }
+                else
+                {
+                    sideWeight = 0.45f;
+                    topWeight = 0.20f;
+                    barbetteWeight = 0.30f;
+                }
+
+                if (casemate)
+                {
+                    sideWeight *= 0.45f;
+                    topWeight *= 0.25f;
+                    barbetteWeight *= 0.25f;
+                }
+
+                AddRawArmorScore(SafeFloat(() => row.sideTurretArmor, 0f), sideWeight * importance, ref weighted, ref weights);
+                AddRawArmorScore(SafeFloat(() => row.topTurretArmor, 0f), topWeight * importance, ref weighted, ref weights);
+                AddRawArmorScore(SafeFloat(() => row.barbetteArmor, 0f), barbetteWeight * importance, ref weighted, ref weights);
+            }
+        }
+        catch (Exception ex)
+        {
+            LogFailureOnce("armor:turrets:" + ex.GetType().Name, $"UADVP effective power: turret armor score failed: {ex.Message}");
+        }
+    }
+
+    private static float GunArmorImportance(float caliber, bool casemate)
+    {
+        float importance = caliber >= 9f ? 1.35f : caliber >= 6f ? 0.75f : 0.25f;
+        return casemate ? importance * 0.45f : importance;
+    }
+
+    private static void AddRawArmorScore(float armor, float weight, ref float weighted, ref float weights)
+    {
+        if (armor <= 0f || weight <= 0f || float.IsNaN(armor) || float.IsInfinity(armor))
+            return;
+
+        weighted += armor * weight;
+        weights += weight;
+    }
+
     private static GunProfile BuildGunProfile(Ship ship)
     {
         float totalWeight = 0f;
         float reloadScore = 0f;
         float rangeScore = 0f;
         float accuracyScore = 0f;
+        float adjustedGunPower = 0f;
         int groupCount = 0;
 
         foreach ((PartData data, int count) in GunGroups(ship))
@@ -568,18 +903,20 @@ internal static class ShipEffectivePowerCalculator
             reloadScore += weight * (1f / Math.Max(1f, reload));
             rangeScore += weight * Math.Max(1f, range);
             accuracyScore += weight * Math.Max(0.01f, intrinsicAccuracy);
+            adjustedGunPower += AdjustedGunGroupPower(ship, data, count, weight, reload, range, intrinsicAccuracy);
         }
 
         float shipAccuracy = ShipAccuracyScore(ship);
         if (totalWeight <= 0f)
-            return new GunProfile(1f, 1f, 1f, shipAccuracy, 0);
+            return new GunProfile(1f, 1f, 1f, shipAccuracy, 0, 0f);
 
         return new GunProfile(
             reloadScore / totalWeight,
             rangeScore / totalWeight,
             accuracyScore / totalWeight,
             shipAccuracy,
-            groupCount);
+            groupCount,
+            adjustedGunPower * Clamp(shipAccuracy, 0.25f, 3f));
     }
 
     private static TorpedoProfile BuildTorpedoProfile(Ship ship)
@@ -589,6 +926,7 @@ internal static class ShipEffectivePowerCalculator
         float speedScore = 0f;
         float reloadScore = 0f;
         float accuracyScore = 0f;
+        float adjustedTorpedoPower = 0f;
         int tubeCount = 0;
 
         foreach ((PartData data, int count) in TorpedoGroups(ship))
@@ -610,17 +948,39 @@ internal static class ShipEffectivePowerCalculator
             speedScore += weight * Math.Max(1f, speed);
             reloadScore += weight * (1f / Math.Max(1f, reload));
             accuracyScore += weight * Math.Max(0.01f, accuracy);
+            adjustedTorpedoPower += AdjustedTorpedoGroupPower(count, barrels, range, speed, reload, accuracy);
         }
 
         if (totalWeight <= 0f)
-            return new TorpedoProfile(1f, 1f, 1f, 1f, 0);
+            return new TorpedoProfile(1f, 1f, 1f, 1f, 0, 0f);
 
         return new TorpedoProfile(
             rangeScore / totalWeight,
             speedScore / totalWeight,
             reloadScore / totalWeight,
             accuracyScore / totalWeight,
-            tubeCount);
+            tubeCount,
+            adjustedTorpedoPower);
+    }
+
+    private static float AdjustedGunGroupPower(Ship ship, PartData data, int count, float weight, float reload, float range, float intrinsicAccuracy)
+    {
+        float caliber = CaliberInches(SafeFloat(() => data.GetCaliberInch(ship), SafeFloat(() => data.caliber, 1f)));
+        float reloadFactor = Clamp(30f / Math.Max(1f, reload), 0.15f, 5f);
+        float rangeFactor = Clamp((float)Math.Sqrt(Math.Max(1f, range) / 10000f), 0.25f, 4f);
+        float accuracyFactor = Clamp((float)Math.Sqrt(Math.Max(0.01f, intrinsicAccuracy)), 0.25f, 4f);
+        float roleFactor = caliber >= 9f ? 1.20f : caliber >= 6f ? 0.85f : 0.45f;
+        return Math.Max(0f, weight * reloadFactor * rangeFactor * accuracyFactor * roleFactor * 25f);
+    }
+
+    private static float AdjustedTorpedoGroupPower(int count, int barrels, float range, float speed, float reload, float accuracy)
+    {
+        int tubes = Math.Max(1, count * barrels);
+        float rangeFactor = Clamp((float)Math.Sqrt(Math.Max(1f, range) / 6000f), 0.25f, 3.5f);
+        float speedFactor = Clamp(Math.Max(1f, speed) / 35f, 0.25f, 2.5f);
+        float reloadFactor = Clamp(60f / Math.Max(1f, reload), 0.20f, 4f);
+        float accuracyFactor = Clamp((float)Math.Sqrt(Math.Max(0.01f, accuracy)), 0.25f, 3f);
+        return Math.Max(0f, tubes * 700f * rangeFactor * speedFactor * reloadFactor * accuracyFactor);
     }
 
     private static IEnumerable<(PartData Data, int Count)> GunGroups(Ship ship)
@@ -959,6 +1319,9 @@ internal static class ShipEffectivePowerCalculator
                 Il2CppSystem.Collections.Generic.List<Ship> designs = new(player.designs);
                 foreach (Ship ship in designs)
                 {
+                    if (CampaignSmartRefitPatch.IsBlockedAiRefitDesign(ship))
+                        continue;
+
                     if (ship != null && (SafeBool(() => ship.isDesign) || SafeBool(() => ship.isRefitDesign)) && !SafeBool(() => ship.isErased))
                         yield return ship;
                 }
@@ -1246,12 +1609,31 @@ internal static class ShipEffectivePowerCalculator
         float RangeScore,
         float IntrinsicAccuracyScore,
         float ShipAccuracyScore,
-        int GroupCount);
+        int GroupCount,
+        float AdjustedPower);
 
     private readonly record struct TorpedoProfile(
         float RangeScore,
         float SpeedScore,
         float ReloadScore,
         float AccuracyScore,
-        int TubeCount);
+        int TubeCount,
+        float AdjustedPower);
+
+    private readonly record struct VpPowerInputs(
+        float VpBasePower,
+        float VanillaBasePower,
+        float VpWeaponPower,
+        float AdjustedGunPower,
+        float AdjustedTorpedoPower,
+        float ArmorAverageMm,
+        float VpArmorScore,
+        float TypeArmorFactor,
+        float ArmorFactor,
+        float WeaponFactor,
+        float Cost,
+        float Speed,
+        float CostFactor,
+        float SpeedFactor,
+        float VanillaFirepower);
 }
