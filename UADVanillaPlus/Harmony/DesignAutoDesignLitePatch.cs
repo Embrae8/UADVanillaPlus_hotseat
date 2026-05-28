@@ -235,6 +235,160 @@ internal static class DesignAutoDesignLitePatch
         }
     }
 
+    internal static bool TryRunPartsOnlyForAi(Ship ship, out string summary)
+    {
+        summary = "not-run";
+        if (ship == null)
+        {
+            summary = "ship-unavailable";
+            return false;
+        }
+
+        if (AddRandomPartsNewMethod == null)
+        {
+            summary = "addRandomPartsNew-unavailable";
+            return false;
+        }
+
+        int beforeParts = Safe(() => ship.parts?.Count ?? 0, 0);
+        bool started = false;
+        int steps = 0;
+        string routineKind = "unknown";
+        TrimSummary trimSummary = TrimSummary.NotRun;
+
+        try { ship.RemoveAllParts(true); }
+        catch (Exception ex)
+        {
+            return FailAiPartsOnly(ship, "removeAllParts", ex, beforeParts, routineKind, steps, started, out summary);
+        }
+
+        object? routineObject;
+        try
+        {
+            routineObject = AddRandomPartsNewMethod.Invoke(
+                ship,
+                new object[]
+                {
+                    true,
+                    null!,
+                    false,
+                    new Il2CppSystem.Nullable<float>(),
+                    false,
+                    true,
+                    true
+                });
+        }
+        catch (Exception ex)
+        {
+            return FailAiPartsOnly(ship, "invoke", ex, beforeParts, routineKind, steps, started, out summary);
+        }
+
+        started = true;
+        const int maxSteps = 20000;
+        if (routineObject is IEnumerator routine)
+        {
+            routineKind = "managed";
+            while (true)
+            {
+                bool next;
+                try { next = routine.MoveNext(); }
+                catch (Exception ex)
+                {
+                    return FailAiPartsOnly(ship, "managedMoveNext", ex, beforeParts, routineKind, steps, started, out summary);
+                }
+
+                if (!next)
+                    break;
+
+                steps++;
+                if (steps >= maxSteps)
+                {
+                    summary = $"step-cap:{routineKind}:{steps}";
+                    WarnAiPartsOnlyFailure(ship, "step-cap", null, beforeParts, routineKind, steps, started, summary);
+                    return false;
+                }
+            }
+        }
+        else if (routineObject is Il2CppSystem.Collections.IEnumerator il2CppRoutine)
+        {
+            routineKind = "il2cpp";
+            while (true)
+            {
+                bool next;
+                try { next = il2CppRoutine.MoveNext(); }
+                catch (Exception ex)
+                {
+                    return FailAiPartsOnly(ship, "il2cppMoveNext", ex, beforeParts, routineKind, steps, started, out summary);
+                }
+
+                if (!next)
+                    break;
+
+                steps++;
+                if (steps >= maxSteps)
+                {
+                    summary = $"step-cap:{routineKind}:{steps}";
+                    WarnAiPartsOnlyFailure(ship, "step-cap", null, beforeParts, routineKind, steps, started, summary);
+                    return false;
+                }
+            }
+        }
+        else
+        {
+            summary = $"unexpected-routine:{routineObject?.GetType().FullName ?? "null"}";
+            WarnAiPartsOnlyFailure(ship, "unexpected-routine", null, beforeParts, routineKind, steps, started, summary);
+            return false;
+        }
+
+        try { trimSummary = TryTrimAutoLiteOverweight(ship); }
+        catch (Exception ex)
+        {
+            return FailAiPartsOnly(ship, "trim", ex, beforeParts, routineKind, steps, started, out summary);
+        }
+
+        try { ship.CalcWeightAndCost(true, true); }
+        catch (Exception ex)
+        {
+            return FailAiPartsOnly(ship, "recalculate", ex, beforeParts, routineKind, steps, started, out summary);
+        }
+
+        int afterParts = Safe(() => ship.parts?.Count ?? 0, 0);
+        summary = $"started={started} routine={routineKind} steps={steps} parts={beforeParts}->{afterParts} trim={LogToken(trimSummary.LogText())}";
+        return afterParts > 0;
+    }
+
+    private static bool FailAiPartsOnly(
+        Ship ship,
+        string stage,
+        Exception ex,
+        int beforeParts,
+        string routineKind,
+        int steps,
+        bool started,
+        out string summary)
+    {
+        string exception = ExceptionChainToken(ex);
+        summary = $"{stage}-failed:{exception}";
+        WarnAiPartsOnlyFailure(ship, stage, exception, beforeParts, routineKind, steps, started, summary);
+        return false;
+    }
+
+    private static void WarnAiPartsOnlyFailure(
+        Ship ship,
+        string stage,
+        string? exception,
+        int beforeParts,
+        string routineKind,
+        int steps,
+        bool started,
+        string summary)
+    {
+        int currentParts = Safe(() => ship.parts?.Count ?? 0, 0);
+        Melon<UADVanillaPlusMod>.Logger.Warning(
+            $"{LogPrefix}: ai parts-only failed stage={LogToken(stage)} ship={LogToken(ShipLabel(ship))} type={LogToken(ShipTypeLabel(ship))} hull={LogToken(HullLabel(ship))} " +
+            $"parts={beforeParts}->{currentParts} started={started} routine={LogToken(routineKind)} steps={steps} summary={LogToken(summary)} exception={LogToken(exception)}.");
+    }
+
     private static void CompleteAutoLite(Ui ui, Ship ship, LiteSpecs before, bool started, TrimSummary trimSummary)
     {
         try
@@ -916,6 +1070,98 @@ internal static class DesignAutoDesignLitePatch
 
     private static string Fmt(float value)
         => value.ToString("0.###", CultureInfo.InvariantCulture);
+
+    private static string ShipLabel(Ship? ship)
+    {
+        if (ship == null)
+            return "none";
+
+        string name = Safe(() => ship.Name(false, false, false, false, true), string.Empty);
+        if (!string.IsNullOrWhiteSpace(name) && !string.Equals(name, "<empty>", StringComparison.Ordinal))
+            return name;
+
+        name = Safe(() => ship.vesselName, string.Empty);
+        return string.IsNullOrWhiteSpace(name) ? "unnamed" : name;
+    }
+
+    private static string ShipTypeLabel(Ship? ship)
+    {
+        ShipType? type = Safe(() => ship?.shipType, null);
+        if (type == null)
+            return "none";
+
+        string name = Safe(() => type.name, string.Empty);
+        if (!string.IsNullOrWhiteSpace(name) && !string.Equals(name, "<empty>", StringComparison.Ordinal))
+            return name;
+
+        name = Safe(() => type.nameUi, string.Empty);
+        return string.IsNullOrWhiteSpace(name) ? "unknown" : name;
+    }
+
+    private static string HullLabel(Ship? ship)
+    {
+        string hull = Safe(() => ship?.hull?.data?.name ?? string.Empty, string.Empty);
+        if (!string.IsNullOrWhiteSpace(hull) && !string.Equals(hull, "<empty>", StringComparison.Ordinal))
+            return hull;
+
+        hull = Safe(() => ship?.hull?.data?.nameUi ?? string.Empty, string.Empty);
+        return string.IsNullOrWhiteSpace(hull) || string.Equals(hull, "<empty>", StringComparison.Ordinal)
+            ? "none"
+            : hull;
+    }
+
+    private static string ExceptionChainToken(Exception ex)
+    {
+        List<string> parts = new();
+        Exception? current = ex;
+        for (int depth = 0; current != null && depth < 3; depth++)
+        {
+            string token = current.GetType().Name;
+            string message = ExceptionMessageToken(current);
+            if (!string.IsNullOrWhiteSpace(message))
+                token += ":" + message;
+            parts.Add(token);
+
+            current = current is TargetInvocationException targetInvocation && targetInvocation.InnerException != null
+                ? targetInvocation.InnerException
+                : current.InnerException;
+        }
+
+        return parts.Count == 0 ? "unknown" : string.Join(">", parts);
+    }
+
+    private static string ExceptionMessageToken(Exception ex)
+    {
+        string message = ex.Message ?? string.Empty;
+        if (string.IsNullOrWhiteSpace(message))
+            return "no-message";
+
+        int lineBreak = message.IndexOfAny(new[] { '\r', '\n' });
+        if (lineBreak >= 0)
+            message = message[..lineBreak];
+
+        message = message.Trim();
+        if (message.Length > 120)
+            message = message[..120] + "...";
+
+        return LogToken(message);
+    }
+
+    private static string LogToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "?";
+
+        return value
+            .Trim()
+            .Replace("\r", " ")
+            .Replace("\n", " ")
+            .Replace("\t", " ")
+            .Replace(";", ",")
+            .Replace("[", "(")
+            .Replace("]", ")")
+            .Replace(" ", "_");
+    }
 
     private static T Safe<T>(Func<T> action, T fallback)
     {

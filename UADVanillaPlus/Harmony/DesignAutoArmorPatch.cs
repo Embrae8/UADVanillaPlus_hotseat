@@ -34,6 +34,8 @@ internal static class DesignAutoArmorPatch
     private const int OverflowTimeCheckInterval = 16;
     private const float ArmorTargetSafetyMargin = 1f;
     private const float ArmorTolerance = 0.0001f;
+    private const float AiLeftoverArmorDumpThresholdTons = 100f;
+    private const float AiLeftoverArmorDumpStepInches = 0.5f;
     private const float SecondaryGunTopArmorCap = 1f;
     private const float SecondaryGunComfortableSpareRatio = 0.04f;
     private const float SecondaryGunRoomySpareRatio = 0.08f;
@@ -144,6 +146,12 @@ internal static class DesignAutoArmorPatch
             $"overflowMinStep={Fmt(OverflowMinStepFor(ArmorFillMode.AiSmartRefit))}",
             $"rejectedOvershoot={result.OverflowRejectedOvershoot}",
             $"rejectedByCap={result.OverflowRejectedByCap}",
+            $"leftoverFill={result.LeftoverFillAccepted}/{result.LeftoverFillIterations}",
+            $"leftoverStop={result.LeftoverFillStopReason}",
+            $"leftoverUnusedBefore={Fmt(result.LeftoverUnusedBefore)}",
+            $"leftoverUnusedAfter={Fmt(result.LeftoverUnusedAfter)}",
+            $"leftoverTargets={result.LeftoverTargets}",
+            $"leftoverDetails={result.LeftoverDetails}",
             $"bandGunArmorClamped={result.SecondaryGunArmorClamped}/{result.SecondaryGunArmorChecked}",
             $"maxBandSideCap={Fmt(result.SecondaryGunSideCap)}",
             $"maxBandTopCap={Fmt(result.SecondaryGunTopCap)}",
@@ -364,7 +372,7 @@ internal static class DesignAutoArmorPatch
     {
         List<ArmorTarget> targets = BuildArmorTargets(ship, mainGun);
         if (targets.Count <= 0)
-            return new ArmorFitResult("no-valid-targets", 0f, 0f, "none", "none", 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0, 0, 0, 0, 0, "not-run", 0f, 0, 0, "not-run", 0, 0, "none", 0, 0, 0f, 0f);
+            return new ArmorFitResult("no-valid-targets", 0f, 0f, "none", "none", 0f, 0f, 0f, 0f, 0f, 0f, 0f, 0, 0, 0, 0, 0, "not-run", 0f, 0, 0, "not-run", 0, 0, "none", 0, 0, "not-run", 0f, 0f, 0, "none", 0, 0, 0f, 0f);
 
         try
         {
@@ -414,6 +422,13 @@ internal static class DesignAutoArmorPatch
                     0,
                     0,
                     "none",
+                    0,
+                    0,
+                    "not-run",
+                    0f,
+                    0f,
+                    0,
+                    "none",
                     secondary.Checked,
                     secondary.Clamped,
                     secondary.SideCap,
@@ -450,6 +465,13 @@ internal static class DesignAutoArmorPatch
                     0,
                     "no-profile-room",
                     0,
+                    0,
+                    "none",
+                    0,
+                    0,
+                    "not-run",
+                    0f,
+                    0f,
                     0,
                     "none",
                     secondary.Checked,
@@ -508,6 +530,23 @@ internal static class DesignAutoArmorPatch
             long clampAfterOverflowStart = Stopwatch.GetTimestamp();
             SecondaryGunArmorStats secondaryAfterOverflowFill = ClampSecondaryGunArmor(ship, mainGun, bestB, capacity, targetWeight);
             activeArmorPerfStats?.AddClamp(clampAfterOverflowStart);
+            OverflowFillStats leftoverFill = new(0, 0, "not-run", 0, 0, "none");
+            float leftoverUnusedBefore = 0f;
+            float leftoverUnusedAfter = 0f;
+            int leftoverTargets = 0;
+            if (mode == ArmorFillMode.AiSmartRefit)
+            {
+                AiLeftoverArmorDumpResult leftoverDump = AiLeftoverArmorDumpFill(
+                    ship,
+                    mainGun,
+                    capacity,
+                    targetWeight);
+                leftoverFill = leftoverDump.Stats;
+                leftoverUnusedBefore = leftoverDump.UnusedBefore;
+                leftoverUnusedAfter = leftoverDump.UnusedAfter;
+                leftoverTargets = leftoverDump.Targets;
+            }
+
             long finalWeightStart = Stopwatch.GetTimestamp();
             float finalWeight = ShipWeight(ship);
             activeArmorPerfStats?.AddFinalWeight(finalWeightStart);
@@ -551,6 +590,13 @@ internal static class DesignAutoArmorPatch
                 overflowFill.RejectedOvershoot,
                 overflowFill.RejectedByCap,
                 overflowFill.Details,
+                leftoverFill.Accepted,
+                leftoverFill.Iterations,
+                leftoverFill.StopReason,
+                leftoverUnusedBefore,
+                leftoverUnusedAfter,
+                leftoverTargets,
+                leftoverFill.Details,
                 secondaryChecked,
                 secondaryClamped,
                 secondarySideCap,
@@ -1313,6 +1359,263 @@ internal static class DesignAutoArmorPatch
                 $"largest={largestJump}",
                 $"maxAccept={maxAccepted}",
                 $"binaryAccept={binaryAccepted}");
+    }
+
+    private static AiLeftoverArmorDumpResult AiLeftoverArmorDumpFill(
+        Ship ship,
+        MainGunArmorSelection mainGun,
+        float capacity,
+        float targetWeight)
+    {
+        int accepted = 0;
+        int iterations = 0;
+        int rejectedOvershoot = 0;
+        int rejectedByCap = 0;
+        int maxAccepted = 0;
+        int binaryAccepted = 0;
+        int touched = 0;
+        string firstTouched = "none";
+        string lastTouched = "none";
+        string largestJump = "none";
+        float largestDelta = 0f;
+        float threshold = AiLeftoverArmorDumpThreshold(capacity);
+        float step = LeftoverArmorStep();
+
+        float unusedBefore = RemainingUnused();
+        float unusedAfter = unusedBefore;
+        int targetCount = 0;
+
+        if (unusedBefore <= ArmorTargetSafetyMargin)
+            return Finish("near-target");
+
+        if (unusedBefore <= threshold)
+            return Finish("threshold");
+
+        List<ArmorTarget> ordered = BuildAiLeftoverArmorDumpTargets(ship, mainGun);
+        targetCount = ordered.Count;
+        if (ordered.Count <= 0)
+            return Finish("no-targets");
+
+        foreach (ArmorTarget target in ordered)
+        {
+            unusedAfter = RemainingUnused();
+            if (unusedAfter <= ArmorTargetSafetyMargin)
+                return Finish("near-target");
+
+            if (unusedAfter <= threshold)
+                return Finish("threshold");
+
+            if (iterations >= MaxAiSmartRefitOverflowFillIterations)
+                return Finish("probe-cap");
+
+            float current = CurrentArmor(ship, target);
+            float max = SnapLeftoverTargetMax(target, step);
+            if (current >= max - ArmorTolerance)
+            {
+                rejectedByCap++;
+                continue;
+            }
+
+            string targetToken = ArmorTargetToken(target);
+            float original = current;
+            float best = current;
+            float low = current;
+            float high = max;
+            float stateValue = current;
+
+            bool ProbeArmorValue(float value, out float weight)
+            {
+                if (iterations >= MaxAiSmartRefitOverflowFillIterations)
+                {
+                    weight = ShipWeight(ship);
+                    return false;
+                }
+
+                SetTargetArmor(ship, target, value);
+                RecalculateArmorWeight(ship);
+                stateValue = value;
+                iterations++;
+                weight = ShipWeight(ship);
+                unusedAfter = Math.Max(0f, targetWeight - weight);
+                return true;
+            }
+
+            void RestoreArmorValue(float value)
+            {
+                SetTargetArmor(ship, target, value);
+                RecalculateArmorWeight(ship);
+                stateValue = value;
+                unusedAfter = RemainingUnused();
+            }
+
+            void AcceptTarget(float value, bool acceptedMax)
+            {
+                accepted++;
+                touched++;
+                if (firstTouched == "none")
+                    firstTouched = targetToken;
+                lastTouched = targetToken;
+
+                if (acceptedMax)
+                    maxAccepted++;
+                else
+                    binaryAccepted++;
+
+                float delta = value - original;
+                if (delta > largestDelta)
+                {
+                    largestDelta = delta;
+                    largestJump = $"{targetToken}:{Fmt(original)}->{Fmt(value)}/{Fmt(max)}";
+                }
+            }
+
+            if (!ProbeArmorValue(max, out float maxWeight))
+                return Finish("probe-cap");
+
+            if (maxWeight <= targetWeight + 0.001f)
+            {
+                AcceptTarget(max, true);
+                continue;
+            }
+
+            rejectedOvershoot++;
+            HashSet<string> probed = new(StringComparer.Ordinal);
+            probed.Add(ArmorProbeKey(max));
+            for (int probe = 0; probe < MaxAiSmartRefitBinaryProbesPerTarget && iterations < MaxAiSmartRefitOverflowFillIterations; probe++)
+            {
+                float candidate = ClampTargetArmor(target, SnapArmorDownToStep((low + high) * 0.5f, step));
+                string key = ArmorProbeKey(candidate);
+                if (candidate <= low + ArmorTolerance || candidate >= high - ArmorTolerance || !probed.Add(key))
+                    break;
+
+                if (!ProbeArmorValue(candidate, out float candidateWeight))
+                {
+                    RestoreArmorValue(best > original + ArmorTolerance ? best : original);
+                    return Finish("probe-cap");
+                }
+
+                if (candidateWeight <= targetWeight + 0.001f)
+                {
+                    best = candidate;
+                    low = candidate;
+                }
+                else
+                {
+                    rejectedOvershoot++;
+                    high = candidate;
+                }
+            }
+
+            if (best > original + ArmorTolerance)
+            {
+                if (Math.Abs(stateValue - best) > ArmorTolerance)
+                    RestoreArmorValue(best);
+
+                AcceptTarget(best, false);
+            }
+            else if (Math.Abs(stateValue - original) > ArmorTolerance)
+            {
+                RestoreArmorValue(original);
+            }
+        }
+
+        unusedAfter = RemainingUnused();
+        bool allMaxed = ordered.Count > 0 && ordered.All(target => CurrentArmor(ship, target) >= SnapLeftoverTargetMax(target, step) - ArmorTolerance);
+        return Finish(allMaxed ? "all-maxed" : "no-affordable-increment");
+
+        float RemainingUnused()
+            => Math.Max(0f, targetWeight - ShipWeight(ship));
+
+        string LeftoverDetails()
+            => string.Join(
+                "|",
+                $"targets={targetCount}",
+                $"touched={touched}",
+                $"first={firstTouched}",
+                $"last={lastTouched}",
+                $"largest={largestJump}",
+                $"maxAccept={maxAccepted}",
+                $"binaryAccept={binaryAccepted}",
+                $"threshold={Fmt(threshold)}");
+
+        AiLeftoverArmorDumpResult Finish(string stopReason)
+            => new(
+                new OverflowFillStats(
+                    accepted,
+                    iterations,
+                    stopReason,
+                    rejectedOvershoot,
+                    rejectedByCap,
+                    LeftoverDetails()),
+                unusedBefore,
+                unusedAfter,
+                targetCount);
+    }
+
+    private static float AiLeftoverArmorDumpThreshold(float capacity)
+        => Math.Max(AiLeftoverArmorDumpThresholdTons, capacity * 0.01f);
+
+    private static float LeftoverArmorStep()
+        => InchesToArmor(AiLeftoverArmorDumpStepInches);
+
+    private static float SnapLeftoverTargetMax(ArmorTarget target, float step)
+        => ClampTargetArmor(target, SnapArmorDownToStep(ClampTargetArmor(target, target.Max), step));
+
+    private static float SnapArmorDownToStep(float value, float step)
+    {
+        if (step <= ArmorTolerance || value <= 0f)
+            return Math.Max(0f, value);
+
+        return Math.Max(0f, (float)Math.Floor((value + ArmorTolerance) / step) * step);
+    }
+
+    private static List<ArmorTarget> BuildAiLeftoverArmorDumpTargets(Ship ship, MainGunArmorSelection mainGun)
+    {
+        List<ArmorTarget> targets = new();
+
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.Belt, 1);
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.ConningTower, 2);
+
+        foreach (GunArmorEntry entry in GunArmorEntries(ship))
+        {
+            if (entry.PartData == null || entry.Row == null || !IsPrimaryGunArmor(entry, mainGun))
+                continue;
+
+            AddAiLeftoverGunRowTarget(ship, targets, entry, Ship.A.TurretSide, 3);
+            AddAiLeftoverGunRowTarget(ship, targets, entry, Ship.A.Barbette, 4);
+            AddAiLeftoverGunRowTarget(ship, targets, entry, Ship.A.TurretTop, 10);
+        }
+
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.BeltBow, 5);
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.BeltStern, 5);
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.InnerBelt_1st, 6);
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.Superstructure, 7);
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.InnerBelt_2nd, 8);
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.InnerBelt_3rd, 9);
+        AddAiLeftoverHullTarget(ship, targets, Ship.A.Deck, 11);
+
+        return targets
+            .Where(target => target.Max > CurrentArmor(ship, target) + ArmorTolerance)
+            .OrderBy(static target => target.Priority)
+            .ThenBy(static target => target.IsGunArmor ? 1 : 0)
+            .ThenBy(static target => target.Zone)
+            .ToList();
+    }
+
+    private static void AddAiLeftoverHullTarget(Ship ship, List<ArmorTarget> targets, Ship.A zone, int priority)
+    {
+        float min = Safe(() => ship.MinArmorForZone(zone), float.NaN);
+        float max = Safe(() => ship.MaxArmorForZone(zone, null), float.NaN);
+        AddTarget(targets, zone, false, null, null, 0f, 0f, priority, min, max);
+    }
+
+    private static void AddAiLeftoverGunRowTarget(Ship ship, List<ArmorTarget> targets, GunArmorEntry entry, Ship.A zone, int priority)
+    {
+        if (entry.PartData == null || entry.Row == null)
+            return;
+
+        float max = Safe(() => ship.MaxArmorForZone(zone, entry.PartData), float.NaN);
+        AddTarget(targets, zone, true, entry.PartData, entry.Row, 0f, 0f, priority, 0f, max);
     }
 
     private static OverflowFillStats OverflowDoctrineFill(
@@ -2466,6 +2769,13 @@ internal static class DesignAutoArmorPatch
         int OverflowRejectedOvershoot,
         int OverflowRejectedByCap,
         string OverflowDetails,
+        int LeftoverFillAccepted,
+        int LeftoverFillIterations,
+        string LeftoverFillStopReason,
+        float LeftoverUnusedBefore,
+        float LeftoverUnusedAfter,
+        int LeftoverTargets,
+        string LeftoverDetails,
         int SecondaryGunArmorChecked,
         int SecondaryGunArmorClamped,
         float SecondaryGunSideCap,
@@ -2488,6 +2798,12 @@ internal static class DesignAutoArmorPatch
         int RejectedOvershoot,
         int RejectedByCap,
         string Details);
+
+    private readonly record struct AiLeftoverArmorDumpResult(
+        OverflowFillStats Stats,
+        float UnusedBefore,
+        float UnusedAfter,
+        int Targets);
 
     private readonly record struct MainGunArmorSelection(
         float Caliber,

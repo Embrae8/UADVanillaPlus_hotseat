@@ -17,7 +17,27 @@ internal static class DesignNewHullDefaultsPatch
     private const float KnotsToMetersPerSecond = 0.514444444f;
     private const float MaxReasonableDesignerSpeedKnots = 80f;
     private const float MaxReasonableDesignerTonnage = 500000f;
+    private const float MaxReasonableBeamDraughtSlider = 100f;
     private const int MaxDeferredEquipmentAttempts = 5;
+
+    private static readonly HashSet<string> SmartAiEarlyTbMinimumGeometryHulls = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "tb_lowbow",
+        "tb_highbow",
+        "tb_standard"
+    };
+
+    private static readonly HashSet<string> SmartAiEarlyDdMinimumGeometryHulls = new(StringComparer.OrdinalIgnoreCase)
+    {
+        "dd_1",
+        "dd_1_france",
+        "dd_1_japan",
+        "dd_1_russia",
+        "dd_1_austria",
+        "dd_1_german",
+        "dd_1_german_large",
+        "dd_1_austria_large"
+    };
 
     private static readonly MethodInfo? RefreshHullStatsMethod =
         AccessTools.Method(typeof(Ship), "RefreshHullStats", Type.EmptyTypes);
@@ -79,6 +99,55 @@ internal static class DesignNewHullDefaultsPatch
 
         return
             $"components={components.Installed}/{components.Attempted} " +
+            $"engine={components.EngineLabel} " +
+            $"armament={armament.Installed}/{armament.Attempted} " +
+            $"equipment={equipment.Installed}/{equipment.Attempted} " +
+            $"torpedoes={torpedoes.Installed}/{torpedoes.Attempted}";
+    }
+
+    internal static string ApplySmartAiDesignDefaults(Ship ship, bool includePartDependentDefaults)
+    {
+        PartData? hullData = Safe(() => ship.hull?.data, null);
+        string geometry = "geometry=not-run";
+        float speed = hullData != null
+            ? ApplyOptimalSpeed(ship, hullData)
+            : Safe(() => ship.speedMax / KnotsToMetersPerSecond, 0f);
+        float tons;
+        if (hullData != null)
+        {
+            GeometryDefaultSummary geometrySummary = ApplySmartAiMinimumGeometry(ship, hullData);
+            geometry = geometrySummary.Detail;
+            tons = geometrySummary.Applied
+                ? Safe(() => ship.Tonnage(), geometrySummary.FinalTonnageTarget)
+                : ApplyMaxTonnage(ship, hullData);
+        }
+        else
+        {
+            tons = Safe(() => ship.Tonnage(), 0f);
+        }
+
+        RangeCrewQuartersDefaults rangeDefaults = ApplySmartAiRangeCrewAndQuarters(ship);
+        ComponentInstallSummary components = ApplyBestComponents(ship);
+        ArmamentInstallSummary armament = includePartDependentDefaults && HasGun(ship)
+            ? ApplyArmamentComponents(ship)
+            : ArmamentInstallSummary.Empty;
+        EquipmentInstallSummary equipment = includePartDependentDefaults && HasMainTower(ship)
+            ? ApplyEquipmentComponents(ship)
+            : EquipmentInstallSummary.Empty;
+        TorpedoInstallSummary torpedoes = includePartDependentDefaults && HasTorpedoLauncher(ship)
+            ? ApplyTorpedoComponents(ship)
+            : TorpedoInstallSummary.Empty;
+
+        try { ship.CalcWeightAndCost(true, true); }
+        catch { }
+
+        return
+            $"hull={Token(hullData)} " +
+            $"speed={Fmt(speed)}kn " +
+            $"tons={Fmt(tons)} " +
+            $"{geometry} " +
+            $"range={rangeDefaults.Range} crew={rangeDefaults.CrewTraining} quarters={rangeDefaults.Quarters} " +
+            $"components={components.Installed}/{components.Attempted} engine={components.EngineLabel} " +
             $"armament={armament.Installed}/{armament.Attempted} " +
             $"equipment={equipment.Installed}/{equipment.Attempted} " +
             $"torpedoes={torpedoes.Installed}/{torpedoes.Attempted}";
@@ -123,7 +192,7 @@ internal static class DesignNewHullDefaultsPatch
 
             float speed = ApplyOptimalSpeed(ship, hullData!);
             float tons = ApplyMaxTonnage(ship, hullData!);
-            ApplyRangeCrewAndQuarters(ship);
+            RangeCrewQuartersDefaults rangeDefaults = ApplyPlayerRangeCrewAndQuarters(ship);
             ComponentInstallSummary components = ApplyBestComponents(ship);
             ResetArmamentDefaultsFor(ship);
             ResetEquipmentDefaultsFor(ship);
@@ -144,7 +213,7 @@ internal static class DesignNewHullDefaultsPatch
             {
                 loggedApply = true;
                 Melon<UADVanillaPlusMod>.Logger.Msg(
-                    $"{LogPrefix}: applied player hull defaults hull={Token(hullData)} name={LogToken(beforeName)}->{LogToken(afterName)} speed={Fmt(speed)}kn tons={Fmt(tons)} range=VeryHigh crew=100 quarters=Spacious components={components.Installed}/{components.Attempted} rudder={components.RudderLabel}.");
+                    $"{LogPrefix}: applied player hull defaults hull={Token(hullData)} name={LogToken(beforeName)}->{LogToken(afterName)} speed={Fmt(speed)}kn tons={Fmt(tons)} range={rangeDefaults.Range} crew={rangeDefaults.CrewTraining} quarters={rangeDefaults.Quarters} components={components.Installed}/{components.Attempted} engine={components.EngineLabel} rudder={components.RudderLabel}.");
             }
         }
         catch (Exception ex)
@@ -346,11 +415,118 @@ internal static class DesignNewHullDefaultsPatch
         return Safe(() => ship.Tonnage(), target);
     }
 
-    private static void ApplyRangeCrewAndQuarters(Ship ship)
+    private static GeometryDefaultSummary ApplySmartAiMinimumGeometry(Ship ship, PartData hullData)
     {
-        ship.SetOpRange(VesselEntity.OpRange.VeryHigh, true);
-        ship.CurrentCrewQuarters = Ship.CrewQuarters.Spacious;
+        string geometryKind = SmartAiMinimumGeometryKind(ship, hullData);
+        if (string.IsNullOrWhiteSpace(geometryKind))
+            return new GeometryDefaultSummary(false, "geometry=default", 0f, 0f);
+
+        float beforeBeam = Safe(() => ship.Beam(), 0f);
+        float beforeDraught = Safe(() => ship.Draught(), 0f);
+        float beforeBonus = Safe(() => ship.BeamDraughtBonus(), 1f);
+        float beforeTons = Safe(() => ship.Tonnage(), 0f);
+
+        float minBeam = Safe(() => ship.BeamMin(), 0f);
+        float maxBeam = Safe(() => ship.BeamMax(), 0f);
+        float minDraught = Safe(() => ship.DraughtMin(), 0f);
+        float maxDraught = Safe(() => ship.DraughtMax(), 0f);
+
+        if (!IsSaneBeamDraughtSlider(minBeam) ||
+            !IsSaneBeamDraughtSlider(maxBeam) ||
+            !IsSaneBeamDraughtSlider(minDraught) ||
+            !IsSaneBeamDraughtSlider(maxDraught) ||
+            maxBeam < minBeam ||
+            maxDraught < minDraught)
+        {
+            return new GeometryDefaultSummary(
+                false,
+                $"geometry={geometryKind}:skipped_invalid_beam={Fmt(minBeam)}/{Fmt(maxBeam)}_draught={Fmt(minDraught)}/{Fmt(maxDraught)}",
+                0f,
+                0f);
+        }
+
+        ship.SetBeam(minBeam, false);
+        ship.SetDraught(minDraught, false);
+
+        float afterBonus = Safe(() => ship.BeamDraughtBonus(), 1f);
+        float targetFinalTons = SmartAiTonnageTargetAfterGeometry(ship, hullData, afterBonus);
+        float setArg = targetFinalTons;
+        if (IsSanePositive(afterBonus, 10f))
+            setArg = targetFinalTons / afterBonus;
+
+        if (IsSanePositive(setArg, MaxReasonableDesignerTonnage))
+            ship.SetTonnage(setArg);
+        else
+            WarnSanityOnce($"skipped Smart AI {geometryKind} compensated tonnage targetFinal={Fmt(targetFinalTons)} setArg={Fmt(setArg)} bonus={Fmt(afterBonus)} hull={Token(hullData)}.");
+
+        float afterBeam = Safe(() => ship.Beam(), minBeam);
+        float afterDraught = Safe(() => ship.Draught(), minDraught);
+        float afterTons = Safe(() => ship.Tonnage(), targetFinalTons);
+
+        return new GeometryDefaultSummary(
+            true,
+            $"geometry={geometryKind}:min_beam={Fmt(beforeBeam)}->{Fmt(afterBeam)}_draught={Fmt(beforeDraught)}->{Fmt(afterDraught)}_bonus={Fmt(beforeBonus)}->{Fmt(afterBonus)}_tons={Fmt(beforeTons)}->{Fmt(afterTons)}_targetFinal={Fmt(targetFinalTons)}_setArg={Fmt(setArg)}",
+            targetFinalTons,
+            setArg);
+    }
+
+    private static string SmartAiMinimumGeometryKind(Ship ship, PartData hullData)
+    {
+        string type = SafeString(() => ship.shipType?.name);
+        string hull = SafeString(() => hullData.name);
+        if (string.Equals(type, "TB", StringComparison.OrdinalIgnoreCase) &&
+            SmartAiEarlyTbMinimumGeometryHulls.Contains(hull))
+        {
+            return "earlyTB";
+        }
+
+        if (string.Equals(type, "DD", StringComparison.OrdinalIgnoreCase) &&
+            SmartAiEarlyDdMinimumGeometryHulls.Contains(hull))
+        {
+            return "earlyDD";
+        }
+
+        return string.Empty;
+    }
+
+    private static float SmartAiTonnageTargetAfterGeometry(Ship ship, PartData hullData, float beamDraughtBonus)
+    {
+        float hullMax = Safe(() => hullData.tonnageMax, 0f);
+        float shipMax = Safe(() => ship.TonnageMax(), 0f);
+        float target = shipMax > 0f
+            ? shipMax
+            : hullMax > 0f && IsSanePositive(beamDraughtBonus, 10f)
+                ? hullMax * beamDraughtBonus
+                : hullMax;
+
+        Player? player = Safe(() => ship.player, null);
+        float limit = Safe(() => player?.TonnageLimit(ship.shipType) ?? -1f, -1f);
+        if (limit > 0f && target > 0f)
+            target = Math.Min(target, limit);
+        else if (target <= 0f && limit > 0f)
+            target = limit;
+
+        return target;
+    }
+
+    private static RangeCrewQuartersDefaults ApplyPlayerRangeCrewAndQuarters(Ship ship)
+        => ApplyRangeCrewAndQuarters(ship, VesselEntity.OpRange.VeryHigh, Ship.CrewQuarters.Spacious);
+
+    private static RangeCrewQuartersDefaults ApplySmartAiRangeCrewAndQuarters(Ship ship)
+        => ApplyRangeCrewAndQuarters(ship, VesselEntity.OpRange.VeryHigh, Ship.CrewQuarters.Spacious);
+
+    private static RangeCrewQuartersDefaults ApplyRangeCrewAndQuarters(
+        Ship ship,
+        VesselEntity.OpRange range,
+        Ship.CrewQuarters quarters)
+    {
+        ship.SetOpRange(range, true);
+        ship.CurrentCrewQuarters = quarters;
         ship.CrewTrainingAmount = 100f;
+        return new RangeCrewQuartersDefaults(
+            range.ToString(),
+            Fmt(Safe(() => ship.CrewTrainingAmount, 100f)),
+            quarters.ToString());
     }
 
     private static ComponentInstallSummary ApplyBestComponents(Ship ship)
@@ -376,6 +552,7 @@ internal static class DesignNewHullDefaultsPatch
 
         int attempted = 0;
         int installed = 0;
+        string engineLabel = "skipped";
         string rudderLabel = "unchanged";
         foreach (string slot in slots)
         {
@@ -387,14 +564,20 @@ internal static class DesignNewHullDefaultsPatch
 
             attempted++;
             if (!Safe(() => ship.InstallComponent(candidate, true), false))
+            {
+                if (string.Equals(slot, "engine", StringComparison.OrdinalIgnoreCase))
+                    engineLabel = "install-failed:" + Token(candidate);
                 continue;
+            }
 
             installed++;
+            if (string.Equals(slot, "engine", StringComparison.OrdinalIgnoreCase))
+                engineLabel = Token(candidate);
             if (string.Equals(slot, "rudder", StringComparison.OrdinalIgnoreCase))
                 rudderLabel = Token(candidate);
         }
 
-        return new ComponentInstallSummary(attempted, installed, rudderLabel);
+        return new ComponentInstallSummary(attempted, installed, engineLabel, rudderLabel);
     }
 
     private static ArmamentInstallSummary TryApplyArmamentDefaults(Ship ship, string context, bool refreshUi)
@@ -579,6 +762,7 @@ internal static class DesignNewHullDefaultsPatch
         string[][] rankedFamilies =
         {
             new[] { "rangefinder_coinc_5", "rangefinder_coinc_4", "rangefinder_coinc_3", "rangefinder_coinc_2", "rangefinder_coinc_1" },
+            new[] { "rangefinder_radar_3", "rangefinder_radar_2", "rangefinder_radar_1" },
             new[] { "sonar_3", "sonar_2", "sonar_1", "hydro_3", "hydro_2", "hydro_1" },
             new[] { "radio_2", "radio_1" }
         };
@@ -763,11 +947,21 @@ internal static class DesignNewHullDefaultsPatch
     private static ComponentData? BestAvailableComponent(Ship ship, IEnumerable<ComponentData> components, string slot)
         => components
             .Where(component => ComponentMatchesSlot(component, slot))
+            .Where(component => !IsForbiddenAutomaticComponent(slot, component))
             .Where(component => IsComponentAvailable(ship, component))
             .OrderByDescending(component => Safe(() => component.order, 0f))
             .ThenByDescending(component => Safe(() => component.tech?.year ?? 0, 0))
             .ThenBy(component => Token(component), StringComparer.OrdinalIgnoreCase)
             .FirstOrDefault();
+
+    private static bool IsForbiddenAutomaticComponent(string slot, ComponentData component)
+    {
+        if (!string.Equals(slot, "engine", StringComparison.OrdinalIgnoreCase))
+            return false;
+
+        string name = SafeString(() => component.name);
+        return string.Equals(name, "main_engine_turbo", StringComparison.OrdinalIgnoreCase);
+    }
 
     private static ComponentData? BestBalancedRudder(Ship ship, IEnumerable<ComponentData> components)
     {
@@ -834,7 +1028,8 @@ internal static class DesignNewHullDefaultsPatch
             "bulkheads" => name.StartsWith("buklheads_", StringComparison.OrdinalIgnoreCase) || name.StartsWith("bulkheads_", StringComparison.OrdinalIgnoreCase) || Same(type, "bulkheads"),
             "antiflooding" => name.StartsWith("Anti_Flooding_", StringComparison.OrdinalIgnoreCase) || name.StartsWith("anti_flooding_", StringComparison.OrdinalIgnoreCase) || Same(type, "antiflooding"),
             "citadel" => name.StartsWith("Citadel_", StringComparison.OrdinalIgnoreCase) || name.StartsWith("citadel_", StringComparison.OrdinalIgnoreCase) || Same(type, "citadel"),
-            "rangefinder" => name.StartsWith("rangefinder_", StringComparison.OrdinalIgnoreCase) || Same(type, "rangefinder"),
+            "rangefinder" => (name.StartsWith("rangefinder_", StringComparison.OrdinalIgnoreCase) && !name.StartsWith("rangefinder_radar_", StringComparison.OrdinalIgnoreCase)) || Same(type, "rangefinder"),
+            "radar" => name.StartsWith("rangefinder_radar_", StringComparison.OrdinalIgnoreCase) || Same(type, "radar"),
             "sonar" => name.StartsWith("hydro_", StringComparison.OrdinalIgnoreCase) || name.StartsWith("sonar_", StringComparison.OrdinalIgnoreCase) || Same(type, "sonar"),
             "radio" => name.StartsWith("radio_", StringComparison.OrdinalIgnoreCase) || Same(type, "radio"),
             _ => false
@@ -968,6 +1163,9 @@ internal static class DesignNewHullDefaultsPatch
     private static bool IsSanePositive(float value, float maxInclusive)
         => value > 0f && value <= maxInclusive && !float.IsNaN(value) && !float.IsInfinity(value);
 
+    private static bool IsSaneBeamDraughtSlider(float value)
+        => Math.Abs(value) <= MaxReasonableBeamDraughtSlider && !float.IsNaN(value) && !float.IsInfinity(value);
+
     private static void WarnSanityOnce(string detail)
     {
         if (loggedSanityWarning)
@@ -1030,7 +1228,10 @@ internal static class DesignNewHullDefaultsPatch
         }
     }
 
-    private readonly record struct ComponentInstallSummary(int Attempted, int Installed, string RudderLabel);
+    private readonly record struct RangeCrewQuartersDefaults(string Range, string CrewTraining, string Quarters);
+    private readonly record struct GeometryDefaultSummary(bool Applied, string Detail, float FinalTonnageTarget, float SetTonnageArgument);
+
+    private readonly record struct ComponentInstallSummary(int Attempted, int Installed, string EngineLabel, string RudderLabel);
     private readonly record struct ArmamentInstallSummary(int Attempted, int Installed, string ComponentsText)
     {
         internal static ArmamentInstallSummary Empty { get; } = new(0, 0, "none");

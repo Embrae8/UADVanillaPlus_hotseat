@@ -11,6 +11,7 @@ internal static class ModSettings
     private const string PortStrikeBalancedKey = "uadvp_port_strike_balanced";
     private const string AiFleetCompositionModeKey = "uadvp_ai_fleet_composition_mode";
     private const string AdvancedAiBuilderEnabledKey = "uadvp_advanced_ai_builder_enabled";
+    private const string SmartAiDesignsEnabledKey = "uadvp_smart_ai_designs_enabled";
     private const string SharedDesignsOnlyModeKey = "uadvp_shared_designs_only_mode";
     private const string SmartRefitsEnabledKey = "uadvp_smart_refits_enabled";
     private const string BattleWeatherAlwaysSunnyKey = "uadvp_battle_weather_always_sunny";
@@ -18,6 +19,8 @@ internal static class ModSettings
     private const string BattleDamageModeKey = "uadvp_battle_damage_mode";
     private const string RealisticShellDamageModeKey = "uadvp_realistic_shell_damage_mode";
     private const string DesignAccuracyPenaltyModeKey = "uadvp_design_accuracy_penalty_mode";
+    private const string HullSpeedAdjustmentEnabledKey = "uadvp_hull_speed_adjustment_enabled";
+    private const string HullWeightAdjustmentEnabledKey = "uadvp_hull_weight_adjustment_enabled";
     private const string MajorShipTorpedoesRestrictedKey = "uadvp_major_ship_torpedoes_restricted";
     private const string ObsoleteDesignRetentionEnabledKey = "uadvp_obsolete_design_retention_enabled";
     private const string SuperstructureRefitsEnabledKey = "uadvp_superstructure_refits_enabled";
@@ -37,6 +40,7 @@ internal static class ModSettings
     private static bool? portStrikeBalanced;
     private static AiFleetCompositionMode? aiFleetCompositionMode;
     private static bool? advancedAiBuilderEnabled;
+    private static bool? smartAiDesignsEnabled;
     private static bool? sharedDesignsOnlyMode;
     private static bool? smartRefitsEnabled;
     private static bool? battleWeatherAlwaysSunny;
@@ -44,6 +48,8 @@ internal static class ModSettings
     private static BattleDamageMode? battleDamageMode;
     private static RealisticShellDamageMode? realisticShellDamageMode;
     private static AccuracyPenaltyMode? designAccuracyPenaltyMode;
+    private static bool? hullSpeedAdjustmentEnabled;
+    private static bool? hullWeightAdjustmentEnabled;
     private static bool? majorShipTorpedoesRestricted;
     private static bool? obsoleteDesignRetentionEnabled;
     private static bool? superstructureRefitsEnabled;
@@ -178,6 +184,19 @@ internal static class ModSettings
         }
     }
 
+    internal static bool SmartAiDesignsEnabled
+    {
+        get => smartAiDesignsEnabled ??= PlayerPrefs.GetInt(SmartAiDesignsEnabledKey, 0) != 0;
+        set
+        {
+            smartAiDesignsEnabled = value;
+            PlayerPrefs.SetInt(SmartAiDesignsEnabledKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Smart AI Designs mode {SmartAiDesignsModeText(value)}.");
+            LogCurrentSettings("after Smart AI Designs change");
+        }
+    }
+
     internal static bool SharedDesignsOnlyMode
     {
         get => sharedDesignsOnlyMode ??= PlayerPrefs.GetInt(SharedDesignsOnlyModeKey, 0) != 0;
@@ -245,6 +264,36 @@ internal static class ModSettings
             PlayerPrefs.Save();
             Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: CA+ Torpedoes mode {(value ? "Disallowed" : "Vanilla")}.");
             LogCurrentSettings("after CA+ Torpedoes change");
+        }
+    }
+
+    internal static bool HullSpeedAdjustmentEnabled
+    {
+        get => hullSpeedAdjustmentEnabled ??= PlayerPrefs.GetInt(HullSpeedAdjustmentEnabledKey, 1) != 0;
+        set
+        {
+            hullSpeedAdjustmentEnabled = value;
+            PlayerPrefs.SetInt(HullSpeedAdjustmentEnabledKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Hull Speed Adjustment mode {HullSpeedAdjustmentModeText(value)}.");
+            LogCurrentSettings("after Hull Speed Adjustment change");
+            HullSpeedAdjustment.ApplyCurrentSetting("option change");
+        }
+    }
+
+    internal static bool HullWeightAdjustmentEnabled
+    {
+        get => hullWeightAdjustmentEnabled ??= PlayerPrefs.GetInt(HullWeightAdjustmentEnabledKey, 1) != 0;
+        set
+        {
+            hullWeightAdjustmentEnabled = value;
+            PlayerPrefs.SetInt(HullWeightAdjustmentEnabledKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Hull Weight Adjustment mode {HullWeightAdjustmentModeText(value)}.");
+            LogCurrentSettings("after Hull Weight Adjustment change");
+            HullWeightAdjustment.ApplyCurrentSetting("option change");
+            ProtectionWeightBalance.ApplyCurrentSetting("option change");
+            ShipWeightBalance.ApplyCurrentSetting("option change");
         }
     }
 
@@ -524,8 +573,17 @@ internal static class ModSettings
     internal static string AdvancedAiBuilderModeText(bool enabled)
         => enabled ? "Enhanced" : "Vanilla";
 
+    internal static string SmartAiDesignsModeText(bool enabled)
+        => enabled ? "Experimental" : "Vanilla";
+
     internal static string SmartRefitsModeText(bool enabled)
         => enabled ? "Enhanced" : "Vanilla";
+
+    internal static string HullSpeedAdjustmentModeText(bool enabled)
+        => enabled ? "Adjusted" : "Vanilla";
+
+    internal static string HullWeightAdjustmentModeText(bool enabled)
+        => enabled ? "Adjusted" : "Vanilla";
 
     internal static string ForeignPortCapacityModeText(ForeignPortCapacityMode mode)
         => mode == ForeignPortCapacityMode.Half ? "50%" : "Vanilla";
@@ -544,6 +602,7 @@ internal static class ModSettings
            $"Port Strike={PortStrikeModeText(PortStrikeBalanced)}; " +
            $"AI Fleet Mix={AiFleetCompositionModeText(AiFleetComposition)}; " +
            $"Advanced AI Builder={AdvancedAiBuilderModeText(AdvancedAiBuilderEnabled)}; " +
+           $"Smart AI Designs={SmartAiDesignsModeText(SmartAiDesignsEnabled)}; " +
            $"Shared Designs={CampaignSharedDesignUsageSettings.CurrentModeText()}; " +
            $"Smart Refits={SmartRefitsModeText(SmartRefitsEnabled)}; " +
            $"Suspend Dock Overcapacity={ShipyardCapacityModeText(ShipyardCapacityBalanced)}; " +
@@ -553,6 +612,8 @@ internal static class ModSettings
            $"Campaign End Date={CampaignEndDateModeText(CampaignEndDateEnabled)}; " +
            $"Mine Warfare={MineWarfareModeText(MineWarfareDisabled)}; " +
            $"Submarine Warfare={SubmarineWarfareModeText(SubmarineWarfareDisabled)}; " +
+           $"Hull Speed Adjustment={HullSpeedAdjustmentModeText(HullSpeedAdjustmentEnabled)}; " +
+           $"Hull Weight Adjustment={HullWeightAdjustmentModeText(HullWeightAdjustmentEnabled)}; " +
            $"CA+ Torpedoes={MajorShipTorpedoesModeText(MajorShipTorpedoesRestricted)}; " +
            $"Obsolete Tech & Hulls={ObsoleteDesignRetentionModeText(ObsoleteDesignRetentionEnabled)}; " +
            $"Superstructure Compatibility={SuperstructureRefitsModeText(SuperstructureRefitsEnabled)}; " +

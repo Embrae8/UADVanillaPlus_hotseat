@@ -69,13 +69,17 @@ internal static class DesignRefitNamePatch
             if (design == null || design.Pointer == currentDesign.Pointer)
                 continue;
 
-            if (!TryReadRefitYearName(design.name, design, out string candidateBaseName, out int candidateYear, out int candidateOrdinal))
-                continue;
+            foreach (string candidateName in RefitNameCandidates(design))
+            {
+                if (!TryReadRefitYearName(candidateName, design, out string candidateBaseName, out int candidateYear, out int candidateOrdinal))
+                    continue;
 
-            if (candidateYear != refitYear || !string.Equals(candidateBaseName, baseName, StringComparison.OrdinalIgnoreCase))
-                continue;
+                if (candidateYear != refitYear || !string.Equals(candidateBaseName, baseName, StringComparison.OrdinalIgnoreCase))
+                    continue;
 
-            highestOrdinal = Math.Max(highestOrdinal, Math.Max(1, candidateOrdinal));
+                highestOrdinal = Math.Max(highestOrdinal, Math.Max(1, candidateOrdinal));
+                break;
+            }
         }
 
         return highestOrdinal + 1;
@@ -83,6 +87,41 @@ internal static class DesignRefitNamePatch
 
     internal static string CleanRefitBaseNameForVp(Ship? ship)
         => CleanRefitBaseName(ship);
+
+    internal static bool TryReadRefitYearNameForVp(string? name, Ship? ship, out string baseName, out int year, out int ordinal)
+        => TryReadRefitYearName(name, ship, out baseName, out year, out ordinal);
+
+    internal static IEnumerable<string> RefitNameCandidatesForVp(Ship? design)
+        => RefitNameCandidates(design);
+
+    internal static string BuildRefitYearNameForVp(string baseName, int year, int ordinal)
+        => $"{baseName} ({year}{ConflictLetterSuffix(ordinal)})";
+
+    private static IEnumerable<string> RefitNameCandidates(Ship? design)
+    {
+        if (design == null)
+            yield break;
+
+        string? rawName = null;
+        try { rawName = design.name; } catch { }
+        if (!string.IsNullOrWhiteSpace(rawName))
+            yield return rawName;
+
+        string? vesselName = null;
+        try { vesselName = design.vesselName; } catch { }
+        if (!string.IsNullOrWhiteSpace(vesselName))
+            yield return vesselName;
+
+        string? refitName = null;
+        try { refitName = design.refitDesignName; } catch { }
+        if (!string.IsNullOrWhiteSpace(refitName))
+            yield return refitName;
+
+        string? displayName = null;
+        try { displayName = design.Name(false, false, false, false, true); } catch { }
+        if (!string.IsNullOrWhiteSpace(displayName))
+            yield return displayName;
+    }
 
     private static string CleanRefitBaseName(Ship? ship)
     {

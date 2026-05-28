@@ -22,6 +22,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
     // Designs tab QoL port: add a compact nation flag strip and rebuild only
     // the design rows, leaving fleet-tab behavior and unrelated TAF/DIP UI edits out.
     private static readonly HashSet<GameObject> ForeignDesignClickVisited = new();
+    private static readonly HashSet<string> LoggedStalePreviewMapClears = new(StringComparer.Ordinal);
     private static readonly Dictionary<Player, GameObject> DesignViewerFlagButtons = new();
     private static readonly Dictionary<GameObject, Image> DesignViewerFlagImages = new();
     private static readonly HashSet<GameObject> DesignShipCountHeaderTooltips = new();
@@ -486,13 +487,24 @@ internal static class CampaignFleetWindowDesignViewerPatch
         if (window == null || player == null || !HasDesignTab(window))
             return;
 
-        if (!GetDesignViewerPlayers().Contains(player))
+        List<Player> players = GetDesignViewerPlayers();
+        Player? resolvedPlayer = ResolveCurrentDesignViewerPlayer(player, players);
+        if (resolvedPlayer == null)
         {
             Melon<UADVanillaPlusMod>.Logger.Warning($"UADVP design viewer: ignored stale nation selector target {PlayerLabel(player)}; rebuilding selector.");
             designViewerToolbarSignature = string.Empty;
             RebuildDesignViewerToolbarIfNeeded();
             UpdateDesignViewerToolbar();
             return;
+        }
+
+        if (!ReferenceEquals(resolvedPlayer, player))
+        {
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"UADVP design viewer: resolved stale nation selector target {PlayerLabel(player)} -> {PlayerLabel(resolvedPlayer)}; rebuilding selector.");
+            designViewerToolbarSignature = string.Empty;
+            RebuildDesignViewerToolbarIfNeeded();
+            player = resolvedPlayer;
         }
 
         designViewerPlayer = player;
@@ -509,6 +521,46 @@ internal static class CampaignFleetWindowDesignViewerPatch
             designViewerPlayer = ExtraGameData.MainPlayer();
             HideDesignViewer();
         }
+    }
+
+    private static Player? ResolveCurrentDesignViewerPlayer(Player player, List<Player> players)
+    {
+        if (player == null || players == null || players.Count == 0)
+            return null;
+
+        foreach (Player candidate in players)
+        {
+            if (candidate == null)
+                continue;
+
+            if (ReferenceEquals(candidate, player))
+                return candidate;
+
+            try
+            {
+                if (candidate.Pointer == player.Pointer)
+                    return candidate;
+            }
+            catch
+            {
+            }
+        }
+
+        string requestedKey = PlayerKey(player);
+        string requestedLabel = PlayerLabel(player);
+        foreach (Player candidate in players)
+        {
+            if (candidate == null)
+                continue;
+
+            if (string.Equals(PlayerKey(candidate), requestedKey, StringComparison.OrdinalIgnoreCase) ||
+                string.Equals(PlayerLabel(candidate), requestedLabel, StringComparison.OrdinalIgnoreCase))
+            {
+                return candidate;
+            }
+        }
+
+        return null;
     }
 
     private static void UpdateDesignViewerToolbar()
@@ -1110,11 +1162,17 @@ internal static class CampaignFleetWindowDesignViewerPatch
                 continue;
 
             Button button = child.GetComponent<Button>();
+            if (!interactable && button != null && button == window.DesignView)
+                continue;
+
             if (button != null)
                 button.interactable = interactable;
         }
 
-        SetDesignActionButtonsInteractable(window, interactable);
+        if (interactable)
+            SetDesignActionButtonsInteractable(window, true);
+        else
+            SetDesignMutationButtonsInteractable(window, false);
     }
 
     private static void SetDesignActionButtonsInteractable(CampaignFleetWindow window, bool interactable)
@@ -1123,6 +1181,14 @@ internal static class CampaignFleetWindowDesignViewerPatch
             return;
 
         if (window.DesignView != null) window.DesignView.interactable = interactable;
+        SetDesignMutationButtonsInteractable(window, interactable);
+    }
+
+    private static void SetDesignMutationButtonsInteractable(CampaignFleetWindow window, bool interactable)
+    {
+        if (window == null)
+            return;
+
         if (window.Delete != null) window.Delete.interactable = interactable;
         if (window.NewDesign != null) window.NewDesign.interactable = interactable;
         if (window.BuildShip != null) window.BuildShip.interactable = interactable;
@@ -1137,11 +1203,12 @@ internal static class CampaignFleetWindowDesignViewerPatch
 
         if (!allowActions)
         {
-            SetForeignDesignButtonsInteractable(window, false);
+            UpdateForeignDesignSelectionActions(window, ship);
             return;
         }
 
         SetDesignActionButtonsInteractable(window, true);
+        InstallDesignViewButtonHandler(window, true, ship);
 
         DesignShipCounts counts = GetDesignShipCounts(player, ship);
         if (window.Delete != null)
@@ -1152,6 +1219,17 @@ internal static class CampaignFleetWindowDesignViewerPatch
 
         if (window.DesignRefit != null && ship.isErased)
             window.DesignRefit.interactable = false;
+    }
+
+    private static void UpdateForeignDesignSelectionActions(CampaignFleetWindow window, Ship selectedShip)
+    {
+        SetDesignMutationButtonsInteractable(window, false);
+
+        bool canView = selectedShip != null && !selectedShip.isErased;
+        if (window?.DesignView != null)
+            window.DesignView.interactable = canView;
+
+        InstallDesignViewButtonHandler(window, false, selectedShip);
     }
 
     private static void DisableDesignSelectionActionsIfNothingSelected(CampaignFleetWindow window)
@@ -1182,6 +1260,42 @@ internal static class CampaignFleetWindowDesignViewerPatch
         }
 
         return null;
+    }
+
+    private static void InstallDesignViewButtonHandler(CampaignFleetWindow window, bool allowActions, Ship capturedTarget = null)
+    {
+        if (window?.DesignView == null)
+            return;
+
+        window.DesignView.onClick.RemoveAllListeners();
+        window.DesignView.onClick.AddListener(new System.Action(() =>
+        {
+            Ship target = GetSelectedViewedDesign(window) ?? capturedTarget;
+            if (target == null || target.isErased)
+            {
+                if (!allowActions)
+                    Melon<UADVanillaPlusMod>.Logger.Msg("UADVP design viewer: foreign read-only design view ignored; selected design is unavailable.");
+                return;
+            }
+
+            bool foreignView = !allowActions || IsViewingForeignDesigns;
+            if (foreignView)
+            {
+                Player owner = GetCurrentDesignViewerPlayer();
+                Melon<UADVanillaPlusMod>.Logger.Msg(
+                    $"UADVP design viewer: opening foreign design read-only nation={LogToken(PlayerLabel(owner))} type={ShipClassLabel(target)} name={LogToken(SafeShipName(target))} year={ShipDesignYear(target)} allowEdit=false.");
+            }
+
+            try
+            {
+                GameManager.Instance?.ToConstructor(false, target, false, null, null, false, null);
+            }
+            catch (Exception ex)
+            {
+                Melon<UADVanillaPlusMod>.Logger.Warning(
+                    $"UADVP design viewer: read-only design view failed design={DesignLogName(target)}. {ex.GetType().Name}: {ex.Message}");
+            }
+        }));
     }
 
     private static void InstallDesignDeleteButtonHandler(CampaignFleetWindow window, bool allowActions, Ship capturedTarget = null)
@@ -1223,6 +1337,58 @@ internal static class CampaignFleetWindowDesignViewerPatch
         window.designUiByShip.Clear();
         window.selectedElements.Clear();
         ForeignDesignClickVisited.Clear();
+    }
+
+    private static bool ClearStaleVanillaDesignPreviewState(
+        CampaignFleetWindow window,
+        Il2CppSystem.Collections.Generic.List<Ship> shipList,
+        Ship nextShip,
+        bool isDesign,
+        string context)
+    {
+        if (!isDesign || window == null || shipList == null || nextShip != null || window.designUiByShip == null)
+            return false;
+
+        try
+        {
+            int requestedCount = shipList.Count;
+            int uiCount = window.designUiByShip.Count;
+            if (requestedCount <= 0 || uiCount <= 0)
+                return false;
+
+            Ship firstShip = shipList[0];
+            if (firstShip == null || window.designUiByShip.ContainsKey(firstShip))
+                return false;
+
+            ClearCurrentDesignList(window);
+            LogStaleVanillaPreviewMapClear(window, firstShip, requestedCount, uiCount, context);
+            return true;
+        }
+        catch (Exception ex)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Warning(
+                $"UADVP DesignViewer stale vanilla preview guard failed during {context}. {ex.GetType().Name}: {ex.Message}");
+            return false;
+        }
+    }
+
+    private static void LogStaleVanillaPreviewMapClear(
+        CampaignFleetWindow window,
+        Ship firstShip,
+        int requestedCount,
+        int uiCount,
+        string context)
+    {
+        string campaignKey = RuntimeObjectKey(CampaignController.Instance);
+        string firstName = DesignLogName(firstShip);
+        string key = $"{campaignKey}|{RuntimeObjectKey(window)}|{PlayerKey(GetCurrentDesignViewerPlayer())}|{firstName}|{requestedCount}|{uiCount}";
+        if (!LoggedStalePreviewMapClears.Add(key))
+            return;
+
+        Melon<UADVanillaPlusMod>.Logger.Msg(
+            "UADVP DesignViewer stale vanilla preview map cleared before refresh: " +
+            $"context={LogToken(context)} first={LogToken(firstName)} ui={uiCount} requested={requestedCount} " +
+            $"viewer={LogToken(PlayerLabel(GetCurrentDesignViewerPlayer()))} campaign={LogToken(campaignKey)}.");
     }
 
     private static Il2CppSystem.Collections.Generic.List<Ship> BuildUiBackedDesignList(CampaignFleetWindow window, Il2CppSystem.Collections.Generic.List<Ship> requestedDesigns, string context)
@@ -1320,6 +1486,37 @@ internal static class CampaignFleetWindowDesignViewerPatch
         }
     }
 
+    private static string SafeShipName(Ship ship)
+    {
+        if (ship == null)
+            return "<null>";
+
+        try
+        {
+            return ship.Name(false, false, false, false, true);
+        }
+        catch
+        {
+            return "<unprintable>";
+        }
+    }
+
+    private static string LogToken(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "?";
+
+        return value
+            .Trim()
+            .Replace("\r", " ")
+            .Replace("\n", " ")
+            .Replace("\t", " ")
+            .Replace(";", ",")
+            .Replace("[", "(")
+            .Replace("]", ")")
+            .Replace(" ", "_");
+    }
+
     private static void RefreshViewedDesigns(CampaignFleetWindow window, bool allowActions)
     {
         Player player = GetCurrentDesignViewerPlayer();
@@ -1339,6 +1536,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
             SetForeignDesignButtonsInteractable(window, allowActions);
             RebuildDesignRefitButton(window, allowActions);
             InstallDesignDeleteButtonHandler(window, allowActions);
+            InstallDesignViewButtonHandler(window, allowActions);
             DisableDesignSelectionActionsIfNothingSelected(window);
             UpdateDesignViewerToolbar();
         }
@@ -1434,6 +1632,7 @@ internal static class CampaignFleetWindowDesignViewerPatch
         UpdateDesignSelectionActions(window, GetCurrentDesignViewerPlayer(), ship, allowActions);
         RebuildDesignRefitButton(window, allowActions);
         InstallDesignDeleteButtonHandler(window, allowActions, ship);
+        InstallDesignViewButtonHandler(window, allowActions, ship);
     }
 
     private static void RebuildDesignRefitButton(CampaignFleetWindow window, bool allowActions)
@@ -1489,6 +1688,15 @@ internal static class CampaignFleetWindowDesignViewerPatch
             Melon<UADVanillaPlusMod>.Logger.Warning($"Design refit button rebuild failed. {ex.GetType().Name}: {ex.Message}");
         }
     }
+
+    [HarmonyPatch("SetDesignImageAndInfoForFirstShip")]
+    [HarmonyPrefix]
+    private static void PrefixSetDesignImageAndInfoForFirstShip(
+        CampaignFleetWindow __instance,
+        Il2CppSystem.Collections.Generic.List<Ship> shipList,
+        Ship nextShip,
+        bool isDesign)
+        => ClearStaleVanillaDesignPreviewState(__instance, shipList, nextShip, isDesign, "vanilla-preview");
 
     [HarmonyPatch(nameof(CampaignFleetWindow.Refresh))]
     [HarmonyPrefix]

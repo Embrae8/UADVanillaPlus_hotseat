@@ -112,21 +112,12 @@ internal static class CampaignAiDesignRetentionPatch
 
     private static bool CanBuildDesign(Ship design)
     {
-        try
-        {
-            PlayerController? controller = PlayerController.Instance;
-            if (controller == null)
-                return false;
-
-            string reason;
-            return controller.CanBuildShipsFromDesign(design, 1, out reason);
-        }
-        catch (Exception ex)
-        {
-            Melon<UADVanillaPlusMod>.Logger.Warning(
-                $"{LogPrefix}: buildability check failed for {AiDesignCompetitiveness.ShipLabel(design)}. {ex.GetType().Name}: {ex.Message}");
-            return false;
-        }
+        return AiDesignBuildability.CanBuildDesign(
+            Safe(() => design.player, null),
+            design,
+            1,
+            "DesignRetention",
+            out _);
     }
 
     private static bool IsBetter(ProtectedDesign candidate, ProtectedDesign current)

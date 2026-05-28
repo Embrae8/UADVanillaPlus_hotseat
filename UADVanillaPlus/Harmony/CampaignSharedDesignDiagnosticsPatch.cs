@@ -915,8 +915,8 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         int techsPruned = PruneRemovedEquipmentTechs(ship, cleanup.RemovedTokens, player);
         RecalculateSharedDesignCandidate(ship, player);
 
-        bool canBuild = CanBuildSharedCandidate(ship, out string buildReason);
-        bool clearLive = cleanup.LivePartsAfter <= 0 && cleanup.CacheAfter <= 0;
+        bool canBuild = CanBuildSharedCandidate(ship, player, "SharedDesignFinalTorpedoSanitize", out string buildReason);
+        bool clearLive = cleanup.LivePartsAfter <= 0 && cleanup.CacheAfter <= 0 && !cleanup.HaveTorpedoesAfter;
         bool clearStore = cleanup.StoreNameTubes == 0 || cleanup.StoreNameTubes < 0;
         bool clearReload = cleanup.ReloadTubes == 0 || cleanup.ReloadTubes < 0;
         string result = clearLive && clearStore && clearReload && canBuild ? "accepted" :
@@ -924,7 +924,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
             "remaining-torpedoes";
 
         Log(
-            $"SharedDesign final-torpedo-sanitize nation={PlayerLabel(player)} type={NormalizeShipType(ship.shipType)} design=\"{ShipLabel(ship)}\" beforeTubes={cleanup.LivePartsBefore + cleanup.CacheBefore} afterTubes={cleanup.LivePartsAfter + cleanup.CacheAfter} livePartsBefore={cleanup.LivePartsBefore} livePartsAfter={cleanup.LivePartsAfter} cacheBefore={cleanup.CacheBefore} cacheAfter={cleanup.CacheAfter} removedLaunchers={cleanup.RemovedLaunchers} removedByRemovePart={cleanup.RemovedByRemovePart} removedStaleCache={cleanup.RemovedStaleCache} removedSupport={cleanup.RemovedSupportComponents} removedComponents={cleanup.RemovedComponentsText} techsPruned={techsPruned} storeNameTubes={MajorShipTorpedoCleanup.TubeCountText(cleanup.StoreNameTubes)} reloadTubes={MajorShipTorpedoCleanup.TubeCountText(cleanup.ReloadTubes)} buildValid={BoolText(canBuild)} buildReason={LogToken(buildReason)} result={result}.");
+            $"SharedDesign final-torpedo-sanitize nation={PlayerLabel(player)} type={NormalizeShipType(ship.shipType)} design=\"{ShipLabel(ship)}\" reason={MajorShipTorpedoCleanup.LogToken(cleanup.Reason)} beforeTubes={cleanup.LivePartsBefore + cleanup.CacheBefore} afterTubes={cleanup.LivePartsAfter + cleanup.CacheAfter} livePartsBefore={cleanup.LivePartsBefore} livePartsAfter={cleanup.LivePartsAfter} cacheBefore={cleanup.CacheBefore} cacheAfter={cleanup.CacheAfter} haveTorpedoesBefore={BoolText(cleanup.HaveTorpedoesBefore)} haveTorpedoesAfter={BoolText(cleanup.HaveTorpedoesAfter)} torpedoesAllBefore={cleanup.TorpedoesAllBefore} torpedoesAllAfter={cleanup.TorpedoesAllAfter} weaponCacheRefresh={BoolText(cleanup.WeaponCacheRefreshOk)} removedLaunchers={cleanup.RemovedLaunchers} removedByRemovePart={cleanup.RemovedByRemovePart} removedStaleCache={cleanup.RemovedStaleCache} removedSupport={cleanup.RemovedSupportComponents} removedComponents={cleanup.RemovedComponentsText} techsPruned={techsPruned} storeNameTubes={MajorShipTorpedoCleanup.TubeCountText(cleanup.StoreNameTubes)} reloadTubes={MajorShipTorpedoCleanup.TubeCountText(cleanup.ReloadTubes)} buildValid={BoolText(canBuild)} buildReason={LogToken(buildReason)} result={result}.");
     }
 
     private static CandidateSummary AnalyzeCandidates(
@@ -2881,9 +2881,19 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         return tokens.Count == 0 ? "none" : string.Join(",", tokens);
     }
 
-    private static bool CanBuildSharedCandidate(Ship ship, out string reason)
+    private static bool CanBuildSharedCandidate(Ship ship, Player? player, string caller, out string reason)
     {
         reason = "none";
+        if (AiDesignBuildability.IsAiPlayer(player))
+        {
+            return AiDesignBuildability.CanBuildDesign(
+                player,
+                ship,
+                1,
+                caller,
+                out reason);
+        }
+
         PlayerController? controller = PlayerController.Instance;
         if (controller == null)
         {
@@ -2912,7 +2922,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
         bool isEarlySavedShip,
         bool logRelaxedPass)
     {
-        if (!isEarlySavedShip && !CanBuildSharedCandidate(ship, out string buildReason))
+        if (!isEarlySavedShip && !CanBuildSharedCandidate(ship, player, "SharedDesignValidation", out string buildReason))
         {
             if (IsTonnageBuildReject(buildReason))
             {
@@ -3025,7 +3035,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                 ship.SetOpRange(currentRange, false);
                 RecalculateSharedDesignCandidate(ship, player);
                 finalTons = Safe(() => ship.Tonnage(), finalTons);
-                if (CanBuildSharedCandidate(ship, out string rangeReason))
+                if (CanBuildSharedCandidate(ship, player, "SharedDesignTonnageRescue:range", out string rangeReason))
                 {
                     result = TonnageRescueResult.Accepted(originalTons, finalTons, limit, originalRange, currentRange, originalSpeed, currentSpeed);
                     LogTonnageRescue(player, ship, result);
@@ -3050,7 +3060,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
                 ship.SetEngineCustomSpeed(currentSpeed);
                 RecalculateSharedDesignCandidate(ship, player);
                 finalTons = Safe(() => ship.Tonnage(), finalTons);
-                if (CanBuildSharedCandidate(ship, out string speedReason))
+                if (CanBuildSharedCandidate(ship, player, "SharedDesignTonnageRescue:speed", out string speedReason))
                 {
                     result = TonnageRescueResult.Accepted(originalTons, finalTons, limit, originalRange, currentRange, originalSpeed, currentSpeed);
                     LogTonnageRescue(player, ship, result);
@@ -3131,7 +3141,7 @@ internal static class CampaignSharedDesignDiagnosticsPatch
             RecalculateSharedDesignCandidate(ship, player);
             float finalTons = Safe(() => ship.Tonnage(), targetTons);
 
-            if (CanBuildSharedCandidate(ship, out string finalReason))
+            if (CanBuildSharedCandidate(ship, player, "SharedDesignInternalWeightRescue", out string finalReason))
             {
                 result = InternalWeightRescueResult.Accepted(originalTons, weight, finalTons, limit);
                 LogInternalWeightRescue(player, ship, result);

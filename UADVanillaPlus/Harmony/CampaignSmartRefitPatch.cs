@@ -164,6 +164,7 @@ internal static class CampaignSmartRefitPatch
                 $"attempt turn={LogToken(turn)} nation={LogToken(nation)} force={force} forceSimple={forceSimple} cash={Fmt(Safe(() => player.cash, 0f))} revenue={Fmt(Safe(() => player.Revenue(), 0f))}.");
 
             AiRefitContinuationResult continuation = ContinueExistingAiSmartRefits(player, force);
+            AddExistingAiRefitCoverageKeys(player, continuation);
             int continued = continuation.Started;
 
             if (!force && !PassAiRefitChanceGate(player, out float chance, out float roll))
@@ -261,6 +262,7 @@ internal static class CampaignSmartRefitPatch
         }
 
         RegisterInProgressSmartAiRefit(refitDesign);
+        bool constructorVisualsCleaned = false;
         try
         {
             LogAi(
@@ -287,10 +289,11 @@ internal static class CampaignSmartRefitPatch
                 return false;
             }
 
-            SafeDo(() => refitDesign.LeaveConstructor());
+            SmartRefitService.CleanupConstructorVisualsBeforeLeave(refitDesign, "ai-success-before-buildability");
+            constructorVisualsCleaned = true;
             if (!CanBuildSmartRefitDesign(refitDesign, out string buildReason))
             {
-                CleanupAiSmartRefitDesign(player, refitDesign, "buildability-" + buildReason);
+                CleanupAiSmartRefitDesign(player, refitDesign, "buildability-" + buildReason, constructorVisualsCleaned);
                 LogAi(
                     $"candidate-finished nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} result=buildability-rejected reason={LogToken(buildReason)} elapsedMs={candidateTimer.ElapsedMilliseconds}.");
                 return false;
@@ -299,7 +302,7 @@ internal static class CampaignSmartRefitPatch
             Il2CppSystem.Collections.Generic.List<Ship> selection = SelectShipsForAiRefit(group.Ships, refitDesign, player, force);
             if (selection.Count == 0)
             {
-                CleanupAiSmartRefitDesign(player, refitDesign, "no-affordable-ships");
+                CleanupAiSmartRefitDesign(player, refitDesign, "no-affordable-ships", constructorVisualsCleaned);
                 LogAi(
                     $"candidate-finished nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} result=no-affordable-ships elapsedMs={candidateTimer.ElapsedMilliseconds}.");
                 return false;
@@ -321,7 +324,7 @@ internal static class CampaignSmartRefitPatch
         }
         catch (Exception ex)
         {
-            CleanupAiSmartRefitDesign(player, refitDesign, "exception-" + ex.GetType().Name);
+            CleanupAiSmartRefitDesign(player, refitDesign, "exception-" + ex.GetType().Name, constructorVisualsCleaned);
             Melon<UADVanillaPlusMod>.Logger.Warning(
                 $"{AiLogPrefix}: failed candidate nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))}. {ex.GetType().Name}: {ex.Message}");
             return false;
@@ -395,6 +398,23 @@ internal static class CampaignSmartRefitPatch
         }
 
         return result;
+    }
+
+    private static void AddExistingAiRefitCoverageKeys(Player player, AiRefitContinuationResult result)
+    {
+        foreach (Ship design in PlayerDesigns(player))
+        {
+            if (!IsAiRefitCoverageTarget(player, design, out string reason, out int liveRefs, out string liveRefExamples))
+                continue;
+
+            int before = result.CoveredGroupKeys.Count;
+            AddContinuationCoverageKeys(result, player, design);
+            if (result.CoveredGroupKeys.Count <= before)
+                continue;
+
+            LogAi(
+                $"coverage-existing nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogLabel(AiDesignCompetitiveness.ShipLabel(design))} reason={LogToken(reason)} liveRefs={liveRefs} liveRefExamples={LogToken(liveRefExamples)}.");
+        }
     }
 
     private static List<AiRefitGroup> FilterContinuationCoveredGroups(
@@ -574,6 +594,66 @@ internal static class CampaignSmartRefitPatch
         }
 
         reason = "ok";
+        return true;
+    }
+
+    private static bool IsAiRefitCoverageTarget(Player player, Ship? design, out string reason, out int liveRefs, out string liveRefExamples)
+    {
+        reason = "unknown";
+        liveRefs = 0;
+        liveRefExamples = "none";
+
+        if (design == null)
+        {
+            reason = "null";
+            return false;
+        }
+
+        if (!ModSettings.SmartRefitsEnabled)
+        {
+            reason = "settings-off";
+            return false;
+        }
+
+        if (!ShouldBlockAiRefits(player))
+        {
+            reason = "not-ai-smart-refit-player";
+            return false;
+        }
+
+        if (Safe(() => design.shipType == null, true))
+        {
+            reason = "no-ship-type";
+            return false;
+        }
+
+        if (Safe(() => design.isErased, false))
+        {
+            reason = "erased";
+            return false;
+        }
+
+        Player? owner = Safe(() => design.player, null);
+        if (owner != null && Safe(() => owner.Pointer != player.Pointer, true))
+        {
+            reason = "owner-mismatch";
+            return false;
+        }
+
+        bool referenced = IsReferencedByLiveRefitShip(player, design, out liveRefs, out liveRefExamples);
+        bool isRefitDesign = Safe(() => design.isRefitDesign, false);
+        int refitTurn = Safe(() => design.dateCreatedRefit.turn, 0);
+        int refitYear = Safe(() => design.dateCreatedRefit.AsDate().Year, 0);
+        bool hasBaseline = Safe(() => design.designShipForRefit != null, false);
+        bool hasGeneratedYearName = refitYear > 0 && HasGeneratedRefitYearName(design, refitYear);
+
+        if (!referenced && !isRefitDesign && refitTurn <= 0 && !hasBaseline && !hasGeneratedYearName)
+        {
+            reason = "not-refit-coverage";
+            return false;
+        }
+
+        reason = refitYear <= 1890 ? "campaign-start-coverage" : "active-refit-coverage";
         return true;
     }
 
@@ -983,8 +1063,12 @@ internal static class CampaignSmartRefitPatch
         reason = "unknown";
         try
         {
-            bool result = PlayerController.Instance != null &&
-                          PlayerController.Instance.CanBuildShipsFromDesign(design, out reason);
+            bool result = AiDesignBuildability.CanBuildDesign(
+                Safe(() => design.player, null),
+                design,
+                1,
+                "SmartRefitStart",
+                out reason);
             reason = NormalizeReason(reason);
             if (result)
                 return true;
@@ -1022,15 +1106,20 @@ internal static class CampaignSmartRefitPatch
         => Safe(() => design.isRefitDesign, false) ||
            Safe(() => design.designShipForRefit != null, false);
 
-    private static void CleanupAiSmartRefitDesign(Player player, Ship? design, string reason)
+    private static void CleanupAiSmartRefitDesign(Player player, Ship? design, string reason, bool visualsAlreadyCleaned = false)
     {
         if (design == null)
             return;
 
-        SafeDo(() => design.LeaveConstructor());
+        if (!visualsAlreadyCleaned)
+        {
+            SmartRefitService.CleanupConstructorVisualsBeforeLeave(design, "ai-cleanup-" + reason);
+            visualsAlreadyCleaned = true;
+        }
+
         UnregisterInProgressSmartAiRefit(design);
         UnregisterAcceptedSmartAiRefit(design);
-        TryRemoveAiRefitDesign(player, design);
+        TryRemoveAiRefitDesign(player, design, visualsAlreadyCleaned);
         LogAi(
             $"cleanup nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} reason={LogToken(reason)}.");
     }
@@ -1286,6 +1375,8 @@ internal static class CampaignSmartRefitPatch
                 if (refitDesigns.Count == 0)
                     continue;
 
+                RepairDuplicateAiRefitNames(player, refitDesigns, context);
+
                 int removed = 0;
                 List<string> examples = new();
                 foreach (Ship design in refitDesigns)
@@ -1294,6 +1385,7 @@ internal static class CampaignSmartRefitPatch
                     {
                         Melon<UADVanillaPlusMod>.Logger.Msg(
                             $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} context={LogToken(context)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} liveRefs={protectedRefs} liveRefExamples={LogToken(protectedExamples)}.");
+                        CleanupProtectedAiRefitVisuals(player, design, context, protectReason);
                         continue;
                     }
 
@@ -1332,6 +1424,184 @@ internal static class CampaignSmartRefitPatch
                 $"{LogPrefix}: leaked AI refit design cleanup failed during {LogToken(context)}. {ex.GetType().Name}: {ex.Message}");
         }
     }
+
+    private static void RepairDuplicateAiRefitNames(Player player, List<Ship> refitDesigns, string context)
+    {
+        List<AiRefitNameRepairEntry> entries = new();
+        foreach (Ship design in refitDesigns)
+        {
+            if (TryBuildAiRefitNameRepairEntry(player, design, out AiRefitNameRepairEntry? entry) && entry != null)
+                entries.Add(entry);
+        }
+
+        if (entries.Count < 2)
+            return;
+
+        foreach (IGrouping<string, AiRefitNameRepairEntry> group in entries.GroupBy(entry => entry.GroupKey, StringComparer.Ordinal))
+        {
+            List<AiRefitNameRepairEntry> groupEntries = group.ToList();
+            if (groupEntries.Count < 2)
+                continue;
+
+            HashSet<AiRefitNameRepairEntry> toRename = new();
+            foreach (IGrouping<int, AiRefitNameRepairEntry> ordinalGroup in groupEntries.GroupBy(entry => Math.Max(1, entry.Ordinal)))
+            {
+                List<AiRefitNameRepairEntry> duplicates = SortRefitNameRepairEntries(ordinalGroup).ToList();
+                foreach (AiRefitNameRepairEntry duplicate in duplicates.Skip(1))
+                    toRename.Add(duplicate);
+            }
+
+            foreach (IGrouping<string, AiRefitNameRepairEntry> nameGroup in groupEntries.GroupBy(entry => entry.VisibleNameKey, StringComparer.Ordinal))
+            {
+                List<AiRefitNameRepairEntry> duplicates = SortRefitNameRepairEntries(nameGroup).ToList();
+                foreach (AiRefitNameRepairEntry duplicate in duplicates.Skip(1))
+                    toRename.Add(duplicate);
+            }
+
+            if (toRename.Count == 0)
+                continue;
+
+            HashSet<int> usedOrdinals = groupEntries
+                .Where(entry => !toRename.Contains(entry))
+                .Select(entry => Math.Max(1, entry.Ordinal))
+                .ToHashSet();
+
+            int renamed = 0;
+            List<string> examples = new();
+            foreach (AiRefitNameRepairEntry entry in SortRefitNameRepairEntries(toRename))
+            {
+                int newOrdinal = NextFreeRefitOrdinal(usedOrdinals);
+                usedOrdinals.Add(newOrdinal);
+                string newName = DesignRefitNamePatch.BuildRefitYearNameForVp(entry.BaseName, entry.Year, newOrdinal);
+                string oldName = AiDesignCompetitiveness.ShipLabel(entry.Design);
+
+                SafeDo(() => entry.Design.name = newName);
+                SafeDo(() => entry.Design.vesselName = newName);
+                SafeDo(() => entry.Design.refitDesignName = newName);
+                int liveUpdated = UpdateLiveShipsForRenamedRefit(player, entry.Design, newName);
+
+                renamed++;
+                if (examples.Count < 4)
+                    examples.Add($"{LogToken(entry.Id)}->{LogToken(newName)}:ships={liveUpdated}:old={LogToken(oldName)}");
+            }
+
+            if (renamed <= 0)
+                continue;
+
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"{LogPrefix}: repaired duplicate AI refit names nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} context={LogToken(context)} type={LogToken(groupEntries[0].Type)} base={LogToken(groupEntries[0].BaseName)} year={groupEntries[0].Year} renamed={renamed} examples={string.Join(",", examples)}.");
+        }
+    }
+
+    private static bool TryBuildAiRefitNameRepairEntry(Player player, Ship design, out AiRefitNameRepairEntry? entry)
+    {
+        entry = null;
+        if (design == null || Safe(() => design.isErased, true))
+            return false;
+
+        bool isRefitDesign = Safe(() => design.isRefitDesign, false);
+        int refitTurn = Safe(() => design.dateCreatedRefit.turn, 0);
+        if (!isRefitDesign && refitTurn <= 0)
+            return false;
+
+        string baseName = string.Empty;
+        int year = 0;
+        int ordinal = 1;
+        foreach (string candidateName in DesignRefitNamePatch.RefitNameCandidatesForVp(design))
+        {
+            if (!DesignRefitNamePatch.TryReadRefitYearNameForVp(candidateName, design, out string candidateBase, out int candidateYear, out int candidateOrdinal))
+                continue;
+
+            baseName = candidateBase;
+            year = candidateYear;
+            ordinal = Math.Max(1, candidateOrdinal);
+            break;
+        }
+
+        if (year <= 0)
+            year = Safe(() => design.dateCreatedRefit.AsDate().Year, 0);
+
+        if (year <= 0)
+            return false;
+
+        if (string.IsNullOrWhiteSpace(baseName))
+            baseName = DesignRefitNamePatch.CleanRefitBaseNameForVp(design);
+
+        baseName = TrimGeneratedNameEdge(baseName);
+        if (string.IsNullOrWhiteSpace(baseName))
+            return false;
+
+        string type = AiDesignCompetitiveness.NormalizeShipType(design.shipType);
+        if (string.IsNullOrWhiteSpace(type))
+            return false;
+
+        IsReferencedByLiveRefitShip(player, design, out int liveRefs, out string liveRefExamples);
+        string visibleName = FirstRefitNameCandidate(design);
+        string id = AiDesignCompetitiveness.ShipId(design);
+        entry = new AiRefitNameRepairEntry(
+            design,
+            type,
+            baseName,
+            year,
+            ordinal,
+            RefitNameRepairGroupKey(type, baseName, year),
+            RefitNameVisibleKey(visibleName),
+            id,
+            liveRefs,
+            liveRefExamples,
+            refitTurn <= 0 ? int.MaxValue : refitTurn);
+        return true;
+    }
+
+    private static IEnumerable<AiRefitNameRepairEntry> SortRefitNameRepairEntries(IEnumerable<AiRefitNameRepairEntry> entries)
+        => entries
+            .OrderByDescending(entry => entry.LiveRefs > 0)
+            .ThenBy(entry => entry.RefitTurn)
+            .ThenBy(entry => entry.Id, StringComparer.OrdinalIgnoreCase);
+
+    private static int NextFreeRefitOrdinal(HashSet<int> usedOrdinals)
+    {
+        int ordinal = 1;
+        while (usedOrdinals.Contains(ordinal))
+            ordinal++;
+
+        return ordinal;
+    }
+
+    private static int UpdateLiveShipsForRenamedRefit(Player player, Ship design, string newName)
+    {
+        int updated = 0;
+        foreach (Ship ship in PlayerFleetShips(player))
+        {
+            if (ship == null || Safe(() => ship.isErased, true) || Safe(() => ship.isDesign, false))
+                continue;
+
+            if (!SameShipIdentity(Safe(() => ship.design, null), design))
+                continue;
+
+            SafeDo(() => ship.refitDesignName = newName);
+            updated++;
+        }
+
+        return updated;
+    }
+
+    private static string FirstRefitNameCandidate(Ship design)
+    {
+        foreach (string candidate in DesignRefitNamePatch.RefitNameCandidatesForVp(design))
+        {
+            if (!string.IsNullOrWhiteSpace(candidate))
+                return candidate;
+        }
+
+        return AiDesignCompetitiveness.ShipLabel(design);
+    }
+
+    private static string RefitNameRepairGroupKey(string type, string baseName, int year)
+        => $"{type.ToUpperInvariant()}|{baseName.ToUpperInvariant()}|{year}";
+
+    private static string RefitNameVisibleKey(string value)
+        => TrimGeneratedNameEdge(value).ToUpperInvariant();
 
     internal static bool BlockAiRefitMoveNext(object? stateMachine, ref bool result)
     {
@@ -1376,7 +1646,7 @@ internal static class CampaignSmartRefitPatch
         }
     }
 
-    private static bool TryRemoveAiRefitDesign(Player player, Ship design)
+    private static bool TryRemoveAiRefitDesign(Player player, Ship design, bool visualsAlreadyCleaned = false)
     {
         if (!Safe(() => design.isDesign, false))
         {
@@ -1389,6 +1659,7 @@ internal static class CampaignSmartRefitPatch
         {
             Melon<UADVanillaPlusMod>.Logger.Msg(
                 $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} liveRefs={protectedRefs} liveRefExamples={LogToken(protectedExamples)}.");
+            CleanupProtectedAiRefitVisuals(player, design, "try-remove", protectReason);
             return false;
         }
 
@@ -1401,9 +1672,11 @@ internal static class CampaignSmartRefitPatch
 
         UnregisterInProgressSmartAiRefit(design);
         UnregisterAcceptedSmartAiRefit(design);
-        string unloadSummary = SmartRefitService.TryUnloadShipPartModels(design, "ai-cleanup-before-delete");
+        string visualSummary = visualsAlreadyCleaned
+            ? "constructorVisualCleanup=skipped_already-cleaned"
+            : SmartRefitService.CleanupConstructorVisualsBeforeLeave(design, "ai-cleanup-before-delete");
         LogAi(
-            $"cleanup-unload nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} cleanup={LogToken(unloadSummary)}.");
+            $"cleanup-unload nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} visuals={LogToken(visualSummary)}.");
 
         try
         {
@@ -1428,6 +1701,17 @@ internal static class CampaignSmartRefitPatch
 
         return Safe(() => design.isErased, false) ||
                !PlayerDesigns(player).Any(existing => Safe(() => existing.Pointer == design.Pointer, false));
+    }
+
+    private static void CleanupProtectedAiRefitVisuals(Player player, Ship design, string context, string protectReason)
+    {
+        if (!ModSettings.SmartRefitsEnabled || !ShouldBlockAiRefits(player) || !IsAiRefitDesignLike(design))
+            return;
+
+        string reason = "ai-protected-" + context + "-" + protectReason;
+        string visualSummary = SmartRefitService.CleanupConstructorVisualsBeforeLeave(design, reason);
+        LogAi(
+            $"protected-cleanup nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} context={LogToken(context)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} visuals={LogToken(visualSummary)}.");
     }
 
     private static bool IsAiRefitDesignLike(Ship? design)
@@ -1716,6 +2000,47 @@ internal static class CampaignSmartRefitPatch
     {
         internal int Started { get; set; }
         internal HashSet<string> CoveredGroupKeys { get; } = new(StringComparer.Ordinal);
+    }
+
+    private sealed class AiRefitNameRepairEntry
+    {
+        internal AiRefitNameRepairEntry(
+            Ship design,
+            string type,
+            string baseName,
+            int year,
+            int ordinal,
+            string groupKey,
+            string visibleNameKey,
+            string id,
+            int liveRefs,
+            string liveRefExamples,
+            int refitTurn)
+        {
+            Design = design;
+            Type = type;
+            BaseName = baseName;
+            Year = year;
+            Ordinal = ordinal;
+            GroupKey = groupKey;
+            VisibleNameKey = visibleNameKey;
+            Id = id;
+            LiveRefs = liveRefs;
+            LiveRefExamples = liveRefExamples;
+            RefitTurn = refitTurn;
+        }
+
+        internal Ship Design { get; }
+        internal string Type { get; }
+        internal string BaseName { get; }
+        internal int Year { get; }
+        internal int Ordinal { get; }
+        internal string GroupKey { get; }
+        internal string VisibleNameKey { get; }
+        internal string Id { get; }
+        internal int LiveRefs { get; }
+        internal string LiveRefExamples { get; }
+        internal int RefitTurn { get; }
     }
 
     private sealed class AiRefitGroup

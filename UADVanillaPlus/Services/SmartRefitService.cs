@@ -18,6 +18,17 @@ internal static class SmartRefitService
     private const string LogPrefix = "UADVP smart refit";
     private static readonly MethodInfo? LoadUnloadModelMethod =
         AccessTools.Method(typeof(Ship), "LoadUnloadModel", new[] { typeof(bool) });
+    private static readonly PropertyInfo? ShipDecorProperty =
+        AccessTools.Property(typeof(Ship), "decor");
+    private static readonly MethodInfo? ShipDecorGetMethod =
+        AccessTools.Method(typeof(Ship), "get_decor", Type.EmptyTypes);
+    private static readonly MethodInfo? ShipDecorSetMethod =
+        AccessTools.Method(typeof(Ship), "set_decor", new[] { typeof(Il2CppSystem.Collections.Generic.List<Decor>) })
+        ?? AccessTools.Method(typeof(Ship), "set_decor");
+    private static readonly FieldInfo? ShipDecorField =
+        AccessTools.Field(typeof(Ship), "decor");
+    private static bool loggedDecorAccessorResolution;
+    private static bool loggedMissingDecorAccessor;
 
     internal static SmartRefitResult Apply(Ship ship)
         => ApplyCore(ship, null, SmartRefitOptions.Manual);
@@ -212,6 +223,260 @@ internal static class SmartRefitService
         return summary;
     }
 
+    internal static string TryCleanupConstructorDecor(Ship? ship, string reason)
+    {
+        if (ship == null)
+            return "decorCleanup=false_ship=null";
+
+        LogDecorAccessorResolutionOnce();
+        if (!HasDecorReadAccessor())
+        {
+            if (!loggedMissingDecorAccessor)
+            {
+                loggedMissingDecorAccessor = true;
+                Melon<UADVanillaPlusMod>.Logger.Warning(
+                    $"{LogPrefix}: constructor-decor-cleanup unavailable reason={LogToken(reason)} ship={LogToken(ShipLabel(ship))} accessor=missing.");
+            }
+
+            return "decorCleanup=false_accessor=missing";
+        }
+
+        int decorCount = 0;
+        int childrenCount = 0;
+        int hiddenDecor = 0;
+        int hiddenChildren = 0;
+        int destroyedChildren = 0;
+        int failures = 0;
+        bool childrenCleared = false;
+        bool decorListCleared = false;
+        string accessor = "none";
+        string setter = "none";
+
+        try
+        {
+            object? rawDecorList = TryGetDecorList(ship, ref failures, out accessor);
+            List<Decor> decorEntries = DecorEntries(rawDecorList, ref failures);
+            decorCount = decorEntries.Count;
+
+            foreach (Decor decor in decorEntries)
+            {
+                if (decor == null)
+                    continue;
+
+                try
+                {
+                    decor.Show(false);
+                    hiddenDecor++;
+                }
+                catch
+                {
+                    failures++;
+                }
+
+                object? rawChildren = Safe(() => (object?)decor.children, null);
+                List<UnityEngine.GameObject> children = DecorChildren(rawChildren, ref failures);
+                childrenCount += children.Count;
+                foreach (UnityEngine.GameObject child in children)
+                {
+                    if (child == null)
+                        continue;
+
+                    try
+                    {
+                        child.SetActive(false);
+                        hiddenChildren++;
+                    }
+                    catch
+                    {
+                        failures++;
+                    }
+
+                    try
+                    {
+                        UnityEngine.Object.Destroy(child);
+                        destroyedChildren++;
+                    }
+                    catch
+                    {
+                        failures++;
+                    }
+                }
+
+                childrenCleared |= TryClearCollection(rawChildren, ref failures);
+            }
+
+            decorListCleared = TryClearCollection(rawDecorList, ref failures);
+            TrySetDecorListNull(ship, ref failures, out setter);
+        }
+        catch
+        {
+            failures++;
+        }
+
+        string summary =
+            $"decorCleanup=true_decor={decorCount}_children={childrenCount}_hidden={hiddenDecor}_childHidden={hiddenChildren}_" +
+            $"destroyed={destroyedChildren}_childrenCleared={childrenCleared}_decorCleared={decorListCleared}_accessor={accessor}_setter={setter}_failures={failures}";
+        if (decorCount > 0 || childrenCount > 0 || failures > 0)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"{LogPrefix}: constructor-decor-cleanup reason={LogToken(reason)} ship={LogToken(ShipLabel(ship))} {summary}.");
+        }
+
+        return summary;
+    }
+
+    internal static string CleanupConstructorVisualsBeforeLeave(Ship? ship, string reason, bool leaveConstructor = true)
+    {
+        if (ship == null)
+            return "constructorVisualCleanup=false_ship=null";
+
+        string preDecor = TryCleanupConstructorDecor(ship, reason + "-pre-leave");
+        string preUnload = TryUnloadShipPartModels(ship, reason + "-pre-leave");
+        bool leave = false;
+        int leaveFailures = 0;
+        if (leaveConstructor)
+        {
+            try
+            {
+                ship.LeaveConstructor();
+                leave = true;
+            }
+            catch
+            {
+                leaveFailures++;
+            }
+        }
+
+        string postDecor = TryCleanupConstructorDecor(ship, reason + "-post-leave");
+        string summary =
+            $"constructorVisualCleanup=true_preDecor={preDecor}_preUnload={preUnload}_leave={leave}_" +
+            $"leaveFailures={leaveFailures}_postDecor={postDecor}";
+        Melon<UADVanillaPlusMod>.Logger.Msg(
+            $"{LogPrefix}: constructor-visual-cleanup reason={LogToken(reason)} ship={LogToken(ShipLabel(ship))} {summary}.");
+        return summary;
+    }
+
+    private static bool HasDecorReadAccessor()
+        => ShipDecorProperty?.CanRead == true || ShipDecorGetMethod != null || ShipDecorField != null;
+
+    private static void LogDecorAccessorResolutionOnce()
+    {
+        if (loggedDecorAccessorResolution)
+            return;
+
+        loggedDecorAccessorResolution = true;
+        string get = ShipDecorProperty?.CanRead == true
+            ? "property"
+            : ShipDecorGetMethod != null
+                ? "getter"
+                : ShipDecorField != null
+                    ? "field"
+                    : "missing";
+        string set = ShipDecorProperty?.CanWrite == true
+            ? "property"
+            : ShipDecorSetMethod != null
+                ? "method"
+                : ShipDecorField != null
+                    ? "field"
+                    : "missing";
+        string field = ShipDecorField != null ? "present" : "missing";
+        Melon<UADVanillaPlusMod>.Logger.Msg(
+            $"{LogPrefix}: decor cleanup accessor resolved get={get} set={set} field={field}.");
+    }
+
+    private static object? TryGetDecorList(Ship ship, ref int failures, out string accessor)
+    {
+        if (ShipDecorProperty?.CanRead == true)
+        {
+            try
+            {
+                accessor = "property";
+                return ShipDecorProperty.GetValue(ship);
+            }
+            catch
+            {
+                failures++;
+            }
+        }
+
+        if (ShipDecorGetMethod != null)
+        {
+            try
+            {
+                accessor = "getter";
+                return ShipDecorGetMethod.Invoke(ship, Array.Empty<object>());
+            }
+            catch
+            {
+                failures++;
+            }
+        }
+
+        if (ShipDecorField != null)
+        {
+            try
+            {
+                accessor = "field";
+                return ShipDecorField.GetValue(ship);
+            }
+            catch
+            {
+                failures++;
+            }
+        }
+
+        accessor = "missing";
+        return null;
+    }
+
+    private static bool TrySetDecorListNull(Ship ship, ref int failures, out string setter)
+    {
+        if (ShipDecorProperty?.CanWrite == true)
+        {
+            try
+            {
+                ShipDecorProperty.SetValue(ship, null);
+                setter = "property";
+                return true;
+            }
+            catch
+            {
+                failures++;
+            }
+        }
+
+        if (ShipDecorSetMethod != null)
+        {
+            try
+            {
+                ShipDecorSetMethod.Invoke(ship, new object?[] { null });
+                setter = "method";
+                return true;
+            }
+            catch
+            {
+                failures++;
+            }
+        }
+
+        if (ShipDecorField != null)
+        {
+            try
+            {
+                ShipDecorField.SetValue(ship, null);
+                setter = "field";
+                return true;
+            }
+            catch
+            {
+                failures++;
+            }
+        }
+
+        setter = "missing";
+        return false;
+    }
+
     internal static string TryReloadShipVisuals(Ship? ship, string reason)
     {
         if (ship == null)
@@ -286,6 +551,134 @@ internal static class SmartRefitService
         {
             part.UnloadModel();
             unloaded++;
+            return true;
+        }
+        catch
+        {
+            failures++;
+            return false;
+        }
+    }
+
+    private static List<Decor> DecorEntries(object? rawDecorList, ref int failures)
+    {
+        List<Decor> result = new();
+        if (rawDecorList == null)
+            return result;
+
+        try
+        {
+            if (rawDecorList is Il2CppSystem.Collections.Generic.List<Decor> il2CppList)
+            {
+                foreach (Decor decor in il2CppList)
+                {
+                    if (decor != null)
+                        result.Add(decor);
+                }
+
+                return result;
+            }
+
+            if (rawDecorList is IEnumerable<Decor> managedList)
+            {
+                foreach (Decor decor in managedList)
+                {
+                    if (decor != null)
+                        result.Add(decor);
+                }
+
+                return result;
+            }
+
+            if (rawDecorList is System.Collections.IEnumerable enumerable)
+            {
+                foreach (object entry in enumerable)
+                {
+                    if (entry is Decor decor && decor != null)
+                        result.Add(decor);
+                }
+            }
+        }
+        catch
+        {
+            failures++;
+        }
+
+        return result;
+    }
+
+    private static List<UnityEngine.GameObject> DecorChildren(object? rawChildren, ref int failures)
+    {
+        List<UnityEngine.GameObject> result = new();
+        if (rawChildren == null)
+            return result;
+
+        try
+        {
+            if (rawChildren is Il2CppSystem.Collections.Generic.List<UnityEngine.GameObject> il2CppList)
+            {
+                foreach (UnityEngine.GameObject child in il2CppList)
+                {
+                    if (child != null)
+                        result.Add(child);
+                }
+
+                return result;
+            }
+
+            if (rawChildren is IEnumerable<UnityEngine.GameObject> managedList)
+            {
+                foreach (UnityEngine.GameObject child in managedList)
+                {
+                    if (child != null)
+                        result.Add(child);
+                }
+
+                return result;
+            }
+
+            if (rawChildren is System.Collections.IEnumerable enumerable)
+            {
+                foreach (object entry in enumerable)
+                {
+                    if (entry is UnityEngine.GameObject child && child != null)
+                        result.Add(child);
+                }
+            }
+        }
+        catch
+        {
+            failures++;
+        }
+
+        return result;
+    }
+
+    private static bool TryClearCollection(object? collection, ref int failures)
+    {
+        if (collection == null)
+            return false;
+
+        try
+        {
+            switch (collection)
+            {
+                case Il2CppSystem.Collections.Generic.List<Decor> decorList:
+                    decorList.Clear();
+                    return true;
+                case Il2CppSystem.Collections.Generic.List<UnityEngine.GameObject> childList:
+                    childList.Clear();
+                    return true;
+                case System.Collections.IList list:
+                    list.Clear();
+                    return true;
+            }
+
+            MethodInfo? clear = AccessTools.Method(collection.GetType(), "Clear", Type.EmptyTypes);
+            if (clear == null)
+                return false;
+
+            clear.Invoke(collection, Array.Empty<object>());
             return true;
         }
         catch
@@ -890,7 +1283,25 @@ internal static class SmartRefitService
         try
         {
             PlayerController? player = PlayerController.Instance;
-            if (player != null && !player.CanBuildShipsFromDesign(ship, out string buildReason))
+            Player? owner = Safe(() => ship.player, null);
+            bool canBuild;
+            string buildReason = "unknown";
+            if (AiDesignBuildability.IsAiPlayer(owner))
+            {
+                canBuild = AiDesignBuildability.CanBuildDesign(
+                    owner,
+                    ship,
+                    1,
+                    "SmartRefitService",
+                    out buildReason);
+            }
+            else
+            {
+                canBuild = player == null || player.CanBuildShipsFromDesign(ship, out buildReason);
+                buildReason = NormalizeReason(buildReason);
+            }
+
+            if (!canBuild)
             {
                 string normalizedReason = NormalizeReason(buildReason);
                 if (string.Equals(normalizedReason, "obsolete", StringComparison.OrdinalIgnoreCase) &&

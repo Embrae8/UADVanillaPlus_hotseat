@@ -637,18 +637,27 @@ internal static class SharedDesignYearInputPatch
         }
     }
 
-    private static int CurrentSharedDesignYear()
+    internal static bool TryGetCurrentSharedDesignYear(out int year)
     {
+        year = 0;
         try
         {
-            int year = G.ui?.sharedDesignYear ?? MinYear;
-            return year > 0 ? year : MinYear;
+            int current = G.ui?.sharedDesignYear ?? 0;
+            if (current >= MinYear && current <= MaxYear)
+            {
+                year = current;
+                return true;
+            }
         }
         catch
         {
-            return MinYear;
         }
+
+        return false;
     }
+
+    private static int CurrentSharedDesignYear()
+        => TryGetCurrentSharedDesignYear(out int year) ? year : MinYear;
 
     private static int PreferredInitialSharedDesignYear(int vanillaYear)
     {

@@ -144,25 +144,12 @@ internal static class CampaignAiDesignRosterPrunePatch
 
     private static bool CanBuildDesign(Ship design, out string reason)
     {
-        reason = "unknown";
-        try
-        {
-            PlayerController? controller = PlayerController.Instance;
-            if (controller == null)
-            {
-                reason = "noPlayerController";
-                return false;
-            }
-
-            bool result = controller.CanBuildShipsFromDesign(design, 1, out reason);
-            reason = NormalizeReason(reason);
-            return result;
-        }
-        catch (Exception ex)
-        {
-            reason = "checkFailed:" + ex.GetType().Name;
-            return false;
-        }
+        return AiDesignBuildability.CanBuildDesign(
+            Safe(() => design.player, null),
+            design,
+            1,
+            "DesignRosterPrune",
+            out reason);
     }
 
     private static GameDate EffectiveDesignDate(Ship design)

@@ -6,6 +6,7 @@ using HarmonyLib;
 using Il2Cpp;
 using MelonLoader;
 using UADVanillaPlus.GameData;
+using UADVanillaPlus.Services;
 
 namespace UADVanillaPlus.Harmony;
 
@@ -676,6 +677,8 @@ internal static class CampaignAiDesignGenerationDiagnostics
     {
         if (context.Prewarming)
             return newDesigns.Count > 0 ? "prewarm-created" : "prewarm";
+        if (newDesigns.Any(SmartAiDesignService.IsAcceptedSmartAiDesign))
+            return "created";
         if (newDesigns.Count > 0)
             return context.SharedAccepted > 0 || newDesigns.Any(IsSharedDesign) ? "shared" : "created";
         if (context.TotalPredicateCalls == 0)
@@ -722,10 +725,18 @@ internal static class CampaignAiDesignGenerationDiagnostics
         if (newDesigns.Count == 0)
             return "none";
 
-        bool anyShared = context.SharedAccepted > 0 || newDesigns.Any(IsSharedDesign);
-        bool anyRandom = newDesigns.Any(design => !IsSharedDesign(design)) && context.SharedAccepted == 0;
-        if (anyShared && anyRandom)
+        bool anySmartAi = newDesigns.Any(SmartAiDesignService.IsAcceptedSmartAiDesign);
+        bool anySharedDesign = newDesigns.Any(design => IsSharedDesign(design) && !SmartAiDesignService.IsAcceptedSmartAiDesign(design));
+        bool anyShared = anySharedDesign || (context.SharedAccepted > 0 && !anySmartAi);
+        bool anyRandom = newDesigns.Any(design =>
+            !IsSharedDesign(design) &&
+            !SmartAiDesignService.IsAcceptedSmartAiDesign(design)) &&
+            context.SharedAccepted == 0;
+        int sourceKinds = (anySmartAi ? 1 : 0) + (anyShared ? 1 : 0) + (anyRandom ? 1 : 0);
+        if (sourceKinds > 1)
             return "mixed";
+        if (anySmartAi)
+            return "smart-ai";
         if (anyShared)
             return "shared";
         return "random";
@@ -869,20 +880,12 @@ internal static class CampaignAiDesignGenerationDiagnostics
 
     private static bool CanBuildDesign(Ship design)
     {
-        try
-        {
-            PlayerController? controller = PlayerController.Instance;
-            if (controller == null)
-                return false;
-
-            string reason = "unknown";
-            return CampaignAiShipbuildingDiagnosticsPatch.WithoutValidationAggregation(() =>
-                controller.CanBuildShipsFromDesign(design, 1, out reason));
-        }
-        catch
-        {
-            return false;
-        }
+        return AiDesignBuildability.CanBuildDesign(
+            Safe(() => design.player, null),
+            design,
+            1,
+            "DesignGenSnapshot",
+            out _);
     }
 
     private static List<Ship> SafeShipList(Il2CppSystem.Collections.Generic.IEnumerable<Ship>? ships)

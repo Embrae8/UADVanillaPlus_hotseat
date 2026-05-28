@@ -387,7 +387,7 @@ internal static class CampaignAiShipbuildingDiagnosticsPatch
         if (!cleanup.Applied)
             return $"skip:{cleanup.Reason}";
 
-        return $"applied:removedTorps={cleanup.RemovedLaunchers},removedSupport={cleanup.RemovedSupportComponents},removedComponents={cleanup.RemovedComponentsText},live={cleanup.LivePartsBefore}->{cleanup.LivePartsAfter},cache={cleanup.CacheBefore}->{cleanup.CacheAfter},store={MajorShipTorpedoCleanup.TubeCountText(cleanup.StoreNameTubes)},reload={MajorShipTorpedoCleanup.TubeCountText(cleanup.ReloadTubes)},valid={cleanup.Valid}";
+        return $"applied:reason={cleanup.Reason},removedTorps={cleanup.RemovedLaunchers},removedSupport={cleanup.RemovedSupportComponents},removedComponents={cleanup.RemovedComponentsText},live={cleanup.LivePartsBefore}->{cleanup.LivePartsAfter},cache={cleanup.CacheBefore}->{cleanup.CacheAfter},have={MajorShipTorpedoCleanup.BoolText(cleanup.HaveTorpedoesBefore)}->{MajorShipTorpedoCleanup.BoolText(cleanup.HaveTorpedoesAfter)},torpedoesAll={cleanup.TorpedoesAllBefore}->{cleanup.TorpedoesAllAfter},weaponCache={MajorShipTorpedoCleanup.BoolText(cleanup.WeaponCacheRefreshOk)},store={MajorShipTorpedoCleanup.TubeCountText(cleanup.StoreNameTubes)},reload={MajorShipTorpedoCleanup.TubeCountText(cleanup.ReloadTubes)},valid={cleanup.Valid}";
     }
 
     internal static T WithoutValidationAggregation<T>(Func<T> action)
