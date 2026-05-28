@@ -16,6 +16,7 @@ internal static class SmartAiDesignService
 {
     private const string LogPrefix = "UADVP smart AI designs";
     private const float Top3MinimumRatio = 0.9f;
+    private const int MaxSmartAiDesignAttempts = 3;
     private const int MaxSummaryExamples = 5;
     private const int MaxAcceptedSmartAiDesignKeys = 512;
 
@@ -63,6 +64,9 @@ internal static class SmartAiDesignService
         string rescueSummary = "not-run";
         string designBookSummary = "not-run";
         string hull = "?";
+        int attemptsUsed = 0;
+        int acceptedAttempt = 0;
+        List<SmartAiInnerAttemptResult> attemptResults = new();
 
         try
         {
@@ -85,40 +89,39 @@ internal static class SmartAiDesignService
             if (!Safe(() => candidate.FromStore(sourceStore, manualId, null, null, false), false))
                 return Finish(false, "fromStore", "failed");
 
+            DesignAutoDesignLitePatch.LogDiagnosticSnapshot(candidate, "smart-ai", "after-fromStore");
             EnsureSmartAiDesignIdentity(candidate, sourceStore, "after-from-store");
             ClearSmartAiSharedMarkers(candidate, "after-from-store");
             InitializeLikeVanillaRandomDesign(controller, candidate);
+            DesignAutoDesignLitePatch.LogDiagnosticSnapshot(candidate, "smart-ai", "after-initialize");
 
-            RandomGenerationResult generation = RunVanillaRandomGeneratorForSmartAi(candidate);
-            generatorSummary = generation.Summary;
-            partsSummary = generation.Summary;
-            defaultsPre = generation.DefaultsPre;
-            defaultsPost = generation.DefaultsPost;
-            if (!generation.Success)
-                return Finish(false, generation.Stage, generation.Reason);
+            for (int attempt = 1; attempt <= MaxSmartAiDesignAttempts; attempt++)
+            {
+                SmartAiInnerAttemptResult result = RunInnerDesignAttempt(attempt);
+                attemptResults.Add(result);
+                attemptsUsed = attempt;
+                defaultsPre = result.DefaultsPre;
+                defaultsPost = result.DefaultsPost;
+                partsSummary = result.PartsSummary;
+                generatorSummary = result.GeneratorSummary;
+                rescueSummary = result.RescueSummary;
+                armorSummary = result.ArmorSummary;
+                powerSummary = result.PowerSummary;
 
-            StrictValidationResult postParts = ValidateRequiredPartsOnly(candidate, "post-parts");
-            if (!postParts.Valid)
-                return Finish(false, postParts.Stage, postParts.Reason);
+                if (result.Accepted)
+                {
+                    acceptedAttempt = attempt;
+                    break;
+                }
+            }
 
-            SmallShipRescueResult rescue = TryRunSmallShipProtectionRescue(candidate, type);
-            rescueSummary = rescue.Summary;
-            if (!rescue.Valid)
-                return Finish(false, rescue.Stage, rescue.Reason);
-
-            if (!DesignAutoArmorPatch.TryApplySmartRefitArmor(candidate, out armorSummary))
-                return Finish(false, "armor", armorSummary);
-
-            StrictValidationResult postArmor = ValidateStrictNewDesign(candidate, "post-armor");
-            if (!postArmor.Valid)
-                return Finish(false, postArmor.Stage, postArmor.Reason);
-
-            EnsureSmartAiDesignIdentity(candidate, sourceStore, "before-top3");
-            ClearSmartAiSharedMarkers(candidate, "before-top3");
-            Top3GateResult top3 = EvaluateTop3Gate(player, candidate);
-            powerSummary = top3.Detail;
-            if (!top3.Accept)
-                return Finish(false, "top3", top3.Detail);
+            if (acceptedAttempt <= 0)
+            {
+                SmartAiInnerAttemptResult lastAttempt = attemptResults.Count == 0
+                    ? SmartAiInnerAttemptResult.Empty
+                    : attemptResults[^1];
+                return Finish(false, lastAttempt.Stage, lastAttempt.Reason);
+            }
 
             EnsureSmartAiDesignIdentity(candidate, sourceStore, "before-accept");
             ClearSmartAiSharedMarkers(candidate, "before-accept");
@@ -141,17 +144,89 @@ internal static class SmartAiDesignService
                 CleanupRejectedCandidate(player, candidate);
 
             string design = candidate == null ? StoreDesign(sourceStore) : AiDesignCompetitiveness.ShipLabel(candidate);
+            string acceptedAttemptText = acceptedAttempt > 0 ? acceptedAttempt.ToString(CultureInfo.InvariantCulture) : "none";
+            string attemptDetails = FormatInnerAttemptDetails(attemptResults, MaxSmartAiDesignAttempts);
+            string serializedTonnage = SerializedTonnageSummary(candidate);
             string message =
                 $"attempt turn={LogToken(turn)} nation={LogToken(nation)} type={type} year={year} " +
                 $"prewarming={BoolText(prewarming)} source=smart-ai-random-fallback designBook={LogToken(designBookSummary)} hull={LogToken(hull)} design={LogToken(design)} id={LogToken(candidateId)} sourceStoreId={LogToken(sourceStoreId)} " +
-                $"result={(accepted ? "accepted" : "rejected")} stage={LogToken(stage)} reason={LogToken(reason)} suppressVanillaFallback={BoolText(suppressVanillaFallback)} " +
+                $"result={(accepted ? "accepted" : "rejected")} stage={LogToken(stage)} reason={LogToken(reason)} suppressVanillaFallback={BoolText(suppressVanillaFallback)} attemptsUsed={attemptsUsed} maxAttempts={MaxSmartAiDesignAttempts} acceptedAttempt={LogToken(acceptedAttemptText)} " +
+                $"serialized={LogToken(serializedTonnage)} " +
                 $"defaultsPre={LogToken(defaultsPre)} parts={LogToken(partsSummary)} defaultsPost={LogToken(defaultsPost)} " +
-                $"generator={LogToken(generatorSummary)} rescue={LogToken(rescueSummary)} armor={LogToken(armorSummary)} power={LogToken(powerSummary)} elapsedMs={timer.ElapsedMilliseconds}";
+                $"generator={LogToken(generatorSummary)} rescue={LogToken(rescueSummary)} armor={LogToken(armorSummary)} power={LogToken(powerSummary)} attemptDetails={LogToken(attemptDetails)} elapsedMs={timer.ElapsedMilliseconds}";
             Melon<UADVanillaPlusMod>.Logger.Msg($"{LogPrefix}: {message}.");
             RecordSummary(player, prewarming, type, accepted, stage, reason, design, timer.ElapsedMilliseconds);
             if (prewarming)
                 FlushSummary(player, prewarming);
             return new SmartAiDesignAttemptResult(true, accepted, suppressVanillaFallback, stage, reason);
+        }
+
+        SmartAiInnerAttemptResult RunInnerDesignAttempt(int attempt)
+        {
+            Stopwatch attemptTimer = Stopwatch.StartNew();
+            string attemptDefaultsPre = "not-run";
+            string attemptDefaultsPost = "not-run";
+            string attemptPartsSummary = "not-run";
+            string attemptGeneratorSummary = "not-run";
+            string attemptRescueSummary = "not-run";
+            string attemptArmorSummary = "not-run";
+            string attemptPowerSummary = "not-run";
+
+            SmartAiInnerAttemptResult Done(bool accepted, string stage, string reason)
+            {
+                attemptTimer.Stop();
+                return new SmartAiInnerAttemptResult(
+                    attempt,
+                    accepted,
+                    stage,
+                    reason,
+                    attemptDefaultsPre,
+                    attemptDefaultsPost,
+                    attemptPartsSummary,
+                    attemptGeneratorSummary,
+                    attemptRescueSummary,
+                    attemptArmorSummary,
+                    attemptPowerSummary,
+                    attemptTimer.ElapsedMilliseconds);
+            }
+
+            if (candidate == null)
+                return Done(false, "candidate", "missing");
+
+            Ship current = candidate;
+            RandomGenerationResult generation = RunVanillaRandomGeneratorForSmartAi(current);
+            attemptGeneratorSummary = generation.Summary;
+            attemptPartsSummary = generation.Summary;
+            attemptDefaultsPre = generation.DefaultsPre;
+            attemptDefaultsPost = generation.DefaultsPost;
+            if (!generation.Success)
+                return Done(false, generation.Stage, generation.Reason);
+
+            StrictValidationResult postParts = ValidateRequiredPartsOnly(current, "post-parts");
+            if (!postParts.Valid)
+                return Done(false, postParts.Stage, postParts.Reason);
+
+            SmallShipRescueResult rescue = TryRunSmallShipProtectionRescue(current, type);
+            attemptRescueSummary = rescue.Summary;
+            if (!rescue.Valid)
+                return Done(false, rescue.Stage, rescue.Reason);
+
+            if (!DesignAutoArmorPatch.TryApplySmartRefitArmor(current, out attemptArmorSummary))
+                return Done(false, "armor", attemptArmorSummary);
+            DesignAutoDesignLitePatch.LogDiagnosticSnapshot(current, "smart-ai", "after-armor-attempt-" + attempt);
+
+            StrictValidationResult postArmor = ValidateStrictNewDesign(current, "post-armor");
+            if (!postArmor.Valid)
+                return Done(false, postArmor.Stage, postArmor.Reason);
+
+            EnsureSmartAiDesignIdentity(current, sourceStore, "before-top3");
+            ClearSmartAiSharedMarkers(current, "before-top3");
+            Top3GateResult top3 = EvaluateTop3Gate(player, current);
+            attemptPowerSummary = top3.Detail;
+            if (!top3.Accept)
+                return Done(false, "top3", top3.Detail);
+
+            return Done(true, "accepted", "strict-valid");
         }
     }
 
@@ -277,6 +352,7 @@ internal static class SmartAiDesignService
             {
                 candidate.ChangeHull(hullData, null, candidate.shipType, true);
                 changeHull = "ok:" + LogToken(SafeString(() => hullData.name));
+                DesignAutoDesignLitePatch.LogDiagnosticSnapshot(candidate, "smart-ai", "after-changeHull");
             }
         }
         catch (Exception ex)
@@ -362,15 +438,36 @@ internal static class SmartAiDesignService
                 steps++;
                 if (steps >= maxSteps)
                     return Fail("generator", "step-cap:" + steps);
+
+                if (context.SmartPartsSucceeded)
+                {
+                    context.StoppedAfterSmartParts = true;
+                    break;
+                }
             }
 
             context.Completed = true;
+            if (context.StoppedAfterSmartParts)
+            {
+                context.Completed = false;
+                try
+                {
+                    GameManager.EndAutodesign();
+                    context.EndAutodesignSummary = "ok";
+                }
+                catch (Exception ex)
+                {
+                    context.EndAutodesignSummary = "failed:" + ExceptionChainToken(ex);
+                    return Fail("generator-cleanup", "endAutodesign:" + ExceptionChainToken(ex), allowVanillaFallback: true);
+                }
+            }
+
             if (string.Equals(context.DefaultsPre, "not-run", StringComparison.Ordinal))
                 context.DefaultsPre = "not-applied:no-parts-state";
 
             try
             {
-                context.DefaultsPost = DesignNewHullDefaultsPatch.ApplySmartAiDesignDefaults(candidate, includePartDependentDefaults: true);
+                context.DefaultsPost = DesignNewHullDefaultsPatch.ApplySmartAiPartDependentDefaults(candidate, traceWeight: true);
             }
             catch (Exception ex)
             {
@@ -383,6 +480,7 @@ internal static class SmartAiDesignService
             {
                 return Fail("generator", "recalculate:" + ExceptionChainToken(ex), allowVanillaFallback: false);
             }
+            DesignAutoDesignLitePatch.LogDiagnosticSnapshot(candidate, "smart-ai", "after-defaultsPost-before-armor");
 
             try
             {
@@ -554,6 +652,7 @@ internal static class SmartAiDesignService
             context.DefaultsPre = DesignNewHullDefaultsPatch.ApplySmartAiDesignDefaults(
                 context.Candidate,
                 includePartDependentDefaults: false) + "_phase=" + phase;
+            DesignAutoDesignLitePatch.LogDiagnosticSnapshot(context.Candidate, "smart-ai", "after-pre-part-defaults-" + phase);
         }
         catch (Exception ex)
         {
@@ -573,6 +672,7 @@ internal static class SmartAiDesignService
             string summary = DesignNewHullDefaultsPatch.ApplySmartAiDesignDefaults(
                 context.Candidate,
                 includePartDependentDefaults: false);
+            DesignAutoDesignLitePatch.LogDiagnosticSnapshot(context.Candidate, "smart-ai", "after-early-defaults-" + phase);
             float afterTonnage = Safe(() => context.Candidate.Tonnage(), 0f);
             context.EarlyDefaultsSummary =
                 $"{summary}_phase={phase}_tons={beforeTonnage.ToString("0.##", CultureInfo.InvariantCulture)}->{afterTonnage.ToString("0.##", CultureInfo.InvariantCulture)}";
@@ -733,7 +833,7 @@ internal static class SmartAiDesignService
         string skippedSetup = context.SkippedVanillaSetupStates.Count == 0 ? "none" : string.Join("/", context.SkippedVanillaSetupStates);
         return
             $"changeHull={LogToken(changeHull)} enteredConstructorEver={BoolText(enteredConstructorEver)} constructorOpen={BoolText(constructorOpen)} leftConstructor={BoolText(leftConstructor)} " +
-            $"started={BoolText(context.Started)} completed={BoolText(context.Completed)} routine={LogToken(routineKind)} steps={steps} moveNextCalls={context.MoveNextCalls} states={LogToken(states)} " +
+            $"started={BoolText(context.Started)} completed={BoolText(context.Completed)} stoppedAfterSmartParts={BoolText(context.StoppedAfterSmartParts)} endAutodesign={LogToken(context.EndAutodesignSummary)} routine={LogToken(routineKind)} steps={steps} moveNextCalls={context.MoveNextCalls} states={LogToken(states)} " +
             $"earlyDefaults={LogToken(context.EarlyDefaultsSummary)} skippedVanillaSetupStates={LogToken(skippedSetup)} " +
             $"smartParts={LogToken(context.SmartPartsSummary)} smartPartsOk={BoolText(context.SmartPartsSucceeded)} skipVanillaParts={BoolText(context.SkippedVanillaPartsState)} stateSkip={LogToken(context.StateSkip)} " +
             $"callback={BoolText(callbackInvoked)}:{BoolText(callbackResult)} tries={callbackTries} buildTime={callbackBuildTime.ToString("0.###", CultureInfo.InvariantCulture)} " +
@@ -1210,6 +1310,10 @@ internal static class SmartAiDesignService
             return StrictValidationResult.Reject(stage, "shipValid:" + ex.GetType().Name);
         }
 
+        StrictValidationResult serializedTonnage = ValidateSerializedRealTonnage(ship, stage);
+        if (!serializedTonnage.Valid)
+            return serializedTonnage;
+
         try
         {
             bool canBuild = AiDesignBuildability.CanBuildDesign(
@@ -1227,6 +1331,39 @@ internal static class SmartAiDesignService
         }
 
         return StrictValidationResult.Pass(stage);
+    }
+
+    private static StrictValidationResult ValidateSerializedRealTonnage(Ship ship, string stage)
+    {
+        try
+        {
+            Ship.Store? store = SafeToStore(ship);
+            if (store == null)
+                return StrictValidationResult.Reject(stage, "storeRealTonnage:null");
+
+            float realTonnage = Safe(() => store.RealTonnage(), -1f);
+            float capacity = ShipCapacity(ship);
+            if (realTonnage <= 0f || capacity <= 0f)
+                return StrictValidationResult.Reject(
+                    stage,
+                    $"storeRealTonnage:invalid real={FmtTons(realTonnage)} capacity={FmtTons(capacity)}");
+
+            const float toleranceTons = 1f;
+            if (realTonnage > capacity + toleranceTons)
+            {
+                return StrictValidationResult.Reject(
+                    stage,
+                    $"storeRealTonnage:over-capacity real={FmtTons(realTonnage)} capacity={FmtTons(capacity)} " +
+                    $"weight={FmtTons(ShipWeight(ship))} beam={FmtTons(Safe(() => ship.Beam(), 0f))} draught={FmtTons(Safe(() => ship.Draught(), 0f))} " +
+                    $"bonus={FmtTons(Safe(() => ship.BeamDraughtBonus(), 1f))} storeBeam={FmtTons(Safe(() => store.beam, 0f))} storeDraught={FmtTons(Safe(() => store.draught, 0f))}");
+            }
+
+            return StrictValidationResult.Pass(stage);
+        }
+        catch (Exception ex)
+        {
+            return StrictValidationResult.Reject(stage, "storeRealTonnage:" + ex.GetType().Name);
+        }
     }
 
     private static Top3GateResult EvaluateTop3Gate(Player player, Ship candidate)
@@ -1397,6 +1534,26 @@ internal static class SmartAiDesignService
     private static Ship.Store? SafeToStore(Ship? ship)
         => ship == null ? null : Safe(() => ship.ToStore(false), null);
 
+    private static string SerializedTonnageSummary(Ship? ship)
+    {
+        if (ship == null)
+            return "none";
+
+        Ship.Store? store = SafeToStore(ship);
+        if (store == null)
+            return "store=null";
+
+        return
+            $"real={FmtTons(Safe(() => store.RealTonnage(), -1f))}" +
+            $"_capacity={FmtTons(Safe(() => ship.Tonnage(), 0f))}" +
+            $"_weight={FmtTons(ShipWeight(ship))}" +
+            $"_beam={FmtTons(Safe(() => ship.Beam(), 0f))}" +
+            $"_draught={FmtTons(Safe(() => ship.Draught(), 0f))}" +
+            $"_bonus={FmtTons(Safe(() => ship.BeamDraughtBonus(), 1f))}" +
+            $"_storeBeam={FmtTons(Safe(() => store.beam, 0f))}" +
+            $"_storeDraught={FmtTons(Safe(() => store.draught, 0f))}";
+    }
+
     private static bool StoreShared(Ship.Store? store)
         => Safe(() => store?.isSharedDesign ?? false, false);
 
@@ -1515,6 +1672,24 @@ internal static class SmartAiDesignService
         summary.Reasons[reasonKey] = count + 1;
         if (summary.Examples.Count < MaxSummaryExamples)
             summary.Examples.Add($"{type}:{design}:{(accepted ? "accepted" : stage + ":" + reason)}");
+    }
+
+    private static string FormatInnerAttemptDetails(
+        IReadOnlyList<SmartAiInnerAttemptResult> attempts,
+        int maxAttempts)
+    {
+        if (attempts.Count == 0)
+            return "none";
+
+        return string.Join(
+            "|",
+            attempts.Select(attempt =>
+                $"{attempt.Attempt}/{maxAttempts}:{(attempt.Accepted ? "accepted" : "rejected")}:{ShortLogToken(attempt.Stage, 48)}:{ShortLogToken(attempt.Reason, 144)}" +
+                $":elapsedMs={attempt.ElapsedMs.ToString(CultureInfo.InvariantCulture)}" +
+                $":parts={ShortLogToken(attempt.PartsSummary, 144)}" +
+                $":rescue={ShortLogToken(attempt.RescueSummary, 96)}" +
+                $":armor={ShortLogToken(attempt.ArmorSummary, 144)}" +
+                $":power={ShortLogToken(attempt.PowerSummary, 96)}"));
     }
 
     private static string SummaryKeyPrefix(Player player)
@@ -1758,6 +1933,15 @@ internal static class SmartAiDesignService
             .Replace(" ", "_");
     }
 
+    private static string ShortLogToken(string? value, int maxLength)
+    {
+        string token = LogToken(value);
+        if (token.Length <= maxLength)
+            return token;
+
+        return token[..Math.Max(0, maxLength)] + "...";
+    }
+
     private static string SafeString(Func<string?> read)
     {
         try
@@ -1853,6 +2037,35 @@ internal static class SmartAiDesignService
 
     private readonly record struct DesignBookLookup(CampaignDesigns? Book, string Detail);
 
+    private readonly record struct SmartAiInnerAttemptResult(
+        int Attempt,
+        bool Accepted,
+        string Stage,
+        string Reason,
+        string DefaultsPre,
+        string DefaultsPost,
+        string PartsSummary,
+        string GeneratorSummary,
+        string RescueSummary,
+        string ArmorSummary,
+        string PowerSummary,
+        long ElapsedMs)
+    {
+        internal static SmartAiInnerAttemptResult Empty { get; } = new(
+            0,
+            false,
+            "not-run",
+            "no-attempts",
+            "not-run",
+            "not-run",
+            "not-run",
+            "not-run",
+            "not-run",
+            "not-run",
+            "not-run",
+            0);
+    }
+
     private readonly record struct RandomGenerationResult(
         bool Success,
         string Stage,
@@ -1928,6 +2141,8 @@ internal static class SmartAiDesignService
         internal string StateReadFailure { get; set; } = "none";
         internal string MoveNextFailure { get; set; } = "none";
         internal string LeaveConstructorFailure { get; set; } = "none";
+        internal bool StoppedAfterSmartParts { get; set; }
+        internal string EndAutodesignSummary { get; set; } = "not-run";
         internal bool SmartPartsAttempted { get; set; }
         internal bool SmartPartsSucceeded { get; set; }
         internal string SmartPartsSummary { get; set; } = "not-run";

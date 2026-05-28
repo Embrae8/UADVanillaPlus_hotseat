@@ -42,6 +42,8 @@ internal static class DesignAutoArmorPatch
 
     private static readonly MethodInfo? RefreshHullStatsMethod =
         AccessTools.Method(typeof(Ship), "RefreshHullStats", Type.EmptyTypes);
+    private static readonly MethodInfo? RefreshGunsStatsMethod =
+        AccessTools.Method(typeof(Ship), "RefreshGunsStats", Type.EmptyTypes);
     private static readonly MethodInfo? OnConShipChangedMethod =
         AccessTools.Method(typeof(Ui), "OnConShipChanged", new[] { typeof(bool) });
     private static readonly MethodInfo? RefreshPartsMethod =
@@ -2398,6 +2400,13 @@ internal static class DesignAutoArmorPatch
     private static void RecalculateArmorWeight(Ship ship)
     {
         activeArmorPerfStats?.RecordRecalculate();
+
+        try { RefreshHullStatsMethod?.Invoke(ship, Array.Empty<object>()); }
+        catch (Exception ex) { WarnRefreshOnce("RefreshHullStats", ex); }
+
+        try { RefreshGunsStatsMethod?.Invoke(ship, Array.Empty<object>()); }
+        catch (Exception ex) { WarnRefreshOnce("RefreshGunsStats", ex); }
+
         try { ship.CalcWeightAndCost(true, true); }
         catch { }
     }

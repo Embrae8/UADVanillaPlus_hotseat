@@ -5,6 +5,7 @@ using HarmonyLib;
 using Il2Cpp;
 using Il2CppTMPro;
 using MelonLoader;
+using UADVanillaPlus.GameData;
 using UADVanillaPlus.UserInterface;
 using UnityEngine;
 using UnityEngine.UI;
@@ -161,6 +162,7 @@ internal static class DesignAutoDesignLitePatch
         Melon<UADVanillaPlusMod>.Logger.Msg(
             $"{LogPrefix}: requested tons={Fmt(before.Tonnage)} speed={Fmt(Knots(before.SpeedMetersPerSecond))}kn " +
             $"beam={Fmt(before.Beam)} draught={Fmt(before.Draught)} range={before.Range} parts={before.Parts} components={before.Components}.");
+        LogDiagnosticSnapshot(ship, "ui-parts-only", "requested");
 
         runningAutoLite = true;
         try
@@ -192,12 +194,14 @@ internal static class DesignAutoDesignLitePatch
         TrimSummary trimSummary = TrimSummary.NotRun;
         try
         {
+            LogDiagnosticSnapshot(ship, "ui-parts-only", "before-removeAllParts");
             try { ship.RemoveAllParts(true); }
             catch (Exception ex)
             {
                 Melon<UADVanillaPlusMod>.Logger.Warning(
                     $"{LogPrefix}: RemoveAllParts failed before parts-only generation. {ex.GetType().Name}: {ex.Message}");
             }
+            LogDiagnosticSnapshot(ship, "ui-parts-only", "after-removeAllParts");
 
             object? routineObject = AddRandomPartsNewMethod!.Invoke(
                 ship,
@@ -227,7 +231,9 @@ internal static class DesignAutoDesignLitePatch
                 throw new InvalidOperationException($"AddRandomPartsNew returned {routineObject?.GetType().FullName ?? "null"}.");
             }
 
+            LogDiagnosticSnapshot(ship, "ui-parts-only", "after-addRandomPartsNew");
             trimSummary = TryTrimAutoLiteOverweight(ship);
+            LogDiagnosticSnapshot(ship, "ui-parts-only", "after-trim");
         }
         finally
         {
@@ -256,11 +262,13 @@ internal static class DesignAutoDesignLitePatch
         string routineKind = "unknown";
         TrimSummary trimSummary = TrimSummary.NotRun;
 
+        LogDiagnosticSnapshot(ship, "ai-parts-only", "before-removeAllParts");
         try { ship.RemoveAllParts(true); }
         catch (Exception ex)
         {
             return FailAiPartsOnly(ship, "removeAllParts", ex, beforeParts, routineKind, steps, started, out summary);
         }
+        LogDiagnosticSnapshot(ship, "ai-parts-only", "after-removeAllParts");
 
         object? routineObject;
         try
@@ -340,11 +348,13 @@ internal static class DesignAutoDesignLitePatch
             return false;
         }
 
+        LogDiagnosticSnapshot(ship, "ai-parts-only", "after-addRandomPartsNew");
         try { trimSummary = TryTrimAutoLiteOverweight(ship); }
         catch (Exception ex)
         {
             return FailAiPartsOnly(ship, "trim", ex, beforeParts, routineKind, steps, started, out summary);
         }
+        LogDiagnosticSnapshot(ship, "ai-parts-only", "after-trim");
 
         try { ship.CalcWeightAndCost(true, true); }
         catch (Exception ex)
@@ -354,6 +364,7 @@ internal static class DesignAutoDesignLitePatch
 
         int afterParts = Safe(() => ship.parts?.Count ?? 0, 0);
         summary = $"started={started} routine={routineKind} steps={steps} parts={beforeParts}->{afterParts} trim={LogToken(trimSummary.LogText())}";
+        LogDiagnosticSnapshot(ship, "ai-parts-only", "after-recalculate");
         return afterParts > 0;
     }
 
@@ -432,6 +443,211 @@ internal static class DesignAutoDesignLitePatch
             try { EnsureButton(ui); }
             catch { }
         }
+    }
+
+    internal static void LogDiagnosticSnapshot(Ship? ship, string context, string phase)
+    {
+        try
+        {
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"{LogPrefix}: diagnostic context={LogToken(context)} phase={LogToken(phase)} {DiagnosticSnapshot(ship)}.");
+        }
+        catch (Exception ex)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Warning(
+                $"{LogPrefix}: diagnostic snapshot failed context={LogToken(context)} phase={LogToken(phase)}. {ex.GetType().Name}: {ex.Message}");
+        }
+    }
+
+    internal static string DiagnosticSnapshot(Ship? ship)
+    {
+        if (ship == null)
+            return "ship=none";
+
+        try { ship.CalcWeightAndCost(true, true); }
+        catch { }
+
+        WeightValidity weight = ConstructorWeightStatus(ship);
+        string shipName = ShipLabel(ship);
+        string nation = AiDesignCompetitiveness.PlayerLabel(Safe(() => ship.player, null));
+        string type = ShipTypeLabel(ship);
+        string hull = HullLabel(ship);
+        string hullUi = Safe(() => ship.hull?.data?.nameUi ?? string.Empty, string.Empty);
+        if (string.IsNullOrWhiteSpace(hullUi) || string.Equals(hullUi, "<empty>", StringComparison.Ordinal))
+            hullUi = hull;
+        Ship.Store? store = Safe(() => ship.ToStore(false), null);
+        float storeRealTons = Safe(() => store?.RealTonnage() ?? -1f, -1f);
+
+        return
+            $"ship={LogToken(shipName)} nation={LogToken(nation)} type={LogToken(type)} hull={LogToken(hull)} hullUi={LogToken(hullUi)} " +
+            $"tons={Fmt(Safe(() => ship.Tonnage(), 0f))} weight={Fmt(CurrentWeight(ship))} valid={weight.Valid} reason={LogToken(weight.Reason)} " +
+            $"beam={Fmt(Safe(() => ship.Beam(), 0f))} draught={Fmt(Safe(() => ship.Draught(), 0f))} bonus={Fmt(Safe(() => ship.BeamDraughtBonus(), 1f))} " +
+            $"storeRealTons={Fmt(storeRealTons)} storeBeam={Fmt(Safe(() => store?.beam ?? 0f, 0f))} storeDraught={Fmt(Safe(() => store?.draught ?? 0f, 0f))} " +
+            $"speed={Fmt(Knots(Safe(() => ship.speedMax, 0f)))}kn range={Safe(() => ship.opRange, VesselEntity.OpRange.Medium)} quarters={Safe(() => ship.CurrentCrewQuarters, Ship.CrewQuarters.Standard)} " +
+            $"parts={Safe(() => ship.parts?.Count ?? 0, 0)} components={Safe(() => ship.components?.Count ?? 0, 0)} " +
+            $"componentManifest={ShortLogToken(ComponentManifest(ship), 900)} " +
+            $"torpedoComponents={ShortLogToken(TorpedoComponentManifest(ship), 360)} " +
+            $"partManifest={ShortLogToken(PartManifest(ship), 900)} " +
+            $"gunRows={ShortLogToken(GunCaliberManifest(ship), 540)} " +
+            $"gunArmorRows={ShortLogToken(GunArmorManifest(ship), 640)}";
+    }
+
+    private static string ComponentManifest(Ship ship)
+    {
+        List<string> labels = new();
+        try
+        {
+            var components = ship.components;
+            if (components == null)
+                return "none";
+
+            foreach (var pair in components)
+            {
+                string slot = LogToken(Safe(() => pair.Key?.name ?? pair.Key?.ToString() ?? "?", "?"));
+                string component = ComponentLabel(pair.Value);
+                labels.Add($"{slot}={component}");
+            }
+        }
+        catch (Exception ex)
+        {
+            labels.Add("error:" + ex.GetType().Name);
+        }
+
+        return JoinLimited(labels.OrderBy(static label => label, StringComparer.OrdinalIgnoreCase), 40);
+    }
+
+    private static string TorpedoComponentManifest(Ship ship)
+    {
+        List<string> labels = new();
+        try
+        {
+            var components = ship.components;
+            if (components == null)
+                return "none";
+
+            foreach (var pair in components)
+            {
+                ComponentData? component = pair.Value;
+                string text = $"{Safe(() => component?.name ?? string.Empty, string.Empty)} {Safe(() => component?.type ?? string.Empty, string.Empty)} {Safe(() => component?.typex?.name ?? string.Empty, string.Empty)}";
+                if (!text.Contains("torp", StringComparison.OrdinalIgnoreCase))
+                    continue;
+
+                string slot = LogToken(Safe(() => pair.Key?.name ?? pair.Key?.ToString() ?? "?", "?"));
+                labels.Add($"{slot}={ComponentLabel(component)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            labels.Add("error:" + ex.GetType().Name);
+        }
+
+        return JoinLimited(labels.OrderBy(static label => label, StringComparer.OrdinalIgnoreCase), 16);
+    }
+
+    private static string PartManifest(Ship ship)
+    {
+        Dictionary<string, int> counts = new(StringComparer.OrdinalIgnoreCase);
+        foreach (Part part in ShipParts(ship))
+        {
+            PartData? data = Safe(() => part.data, null);
+            string label = PartDataDiagnosticLabel(ship, data);
+            counts.TryGetValue(label, out int count);
+            counts[label] = count + 1;
+        }
+
+        return JoinLimited(
+            counts
+                .OrderByDescending(static pair => pair.Value)
+                .ThenBy(static pair => pair.Key, StringComparer.OrdinalIgnoreCase)
+                .Select(static pair => pair.Value > 1 ? pair.Value.ToString(CultureInfo.InvariantCulture) + "x" + pair.Key : pair.Key),
+            32);
+    }
+
+    private static string GunCaliberManifest(Ship ship)
+    {
+        List<string> labels = new();
+        foreach (Ship.TurretCaliber row in GunCaliberRows(ship))
+        {
+            PartData? data = Safe(() => row.turretPartData, null);
+            labels.Add(
+                $"{PartDataToken(data)}:dia={Fmt(Safe(() => row.diameter, 0f))}:len={Safe(() => row.length, 0).ToString(CultureInfo.InvariantCulture)}");
+        }
+
+        return JoinLimited(labels, 16);
+    }
+
+    private static string GunArmorManifest(Ship ship)
+    {
+        List<string> labels = new();
+        try
+        {
+            var rows = ship.shipTurretArmor;
+            if (rows == null)
+                return "none";
+
+            foreach (Ship.TurretArmor row in rows)
+            {
+                PartData? data = Safe(() => row.turretPartData, null);
+                labels.Add(
+                    $"{PartDataToken(data)}:side={Fmt(Safe(() => row.sideTurretArmor, 0f))}:top={Fmt(Safe(() => row.topTurretArmor, 0f))}:barbette={Fmt(Safe(() => row.barbetteArmor, 0f))}");
+            }
+        }
+        catch (Exception ex)
+        {
+            labels.Add("error:" + ex.GetType().Name);
+        }
+
+        return JoinLimited(labels, 18);
+    }
+
+    private static string PartDataDiagnosticLabel(Ship ship, PartData? data)
+    {
+        if (data == null)
+            return "part:none";
+
+        string label = $"{PartDataToken(data)}:{LogToken(Safe(() => data.type, string.Empty))}";
+        if (Safe(() => data.isGun, false))
+        {
+            float caliber = EffectiveCaliberInches(ship, data);
+            int barrels = Math.Max(1, Safe(() => data.barrels, 1));
+            label += $":{Fmt(caliber)}in:{barrels}b";
+        }
+
+        return label;
+    }
+
+    private static string PartDataToken(PartData? data)
+        => LogToken(Safe(() => data?.name ?? data?.nameUi ?? "none", "none"));
+
+    private static string ComponentLabel(ComponentData? component)
+        => LogToken(Safe(() => component?.name ?? component?.nameUi ?? "none", "none"));
+
+    private static string JoinLimited(IEnumerable<string> values, int maxItems)
+    {
+        List<string> items = values
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Take(maxItems + 1)
+            .ToList();
+        if (items.Count == 0)
+            return "none";
+
+        bool hidden = items.Count > maxItems;
+        if (hidden)
+            items.RemoveAt(items.Count - 1);
+
+        if (hidden)
+            items.Add("+more");
+
+        return string.Join(",", items);
+    }
+
+    private static string ShortLogToken(string? value, int maxLength)
+    {
+        string token = LogToken(value);
+        if (token.Length <= maxLength)
+            return token;
+
+        return token[..Math.Max(0, maxLength)] + "...";
     }
 
     private static TrimSummary TryTrimAutoLiteOverweight(Ship ship)

@@ -3,6 +3,7 @@ using System.Reflection;
 using HarmonyLib;
 using Il2Cpp;
 using MelonLoader;
+using UADVanillaPlus.GameData;
 
 namespace UADVanillaPlus.Harmony;
 
@@ -105,17 +106,24 @@ internal static class DesignNewHullDefaultsPatch
             $"torpedoes={torpedoes.Installed}/{torpedoes.Attempted}";
     }
 
-    internal static string ApplySmartAiDesignDefaults(Ship ship, bool includePartDependentDefaults)
+    internal static string ApplySmartAiDesignDefaults(Ship ship, bool includePartDependentDefaults, bool traceWeight = false)
     {
+        float traceWeightBefore = traceWeight
+            ? TraceSmartAiDefaultWeight(ship, "start", $"includePartDependentDefaults={includePartDependentDefaults}")
+            : float.NaN;
+
         PartData? hullData = Safe(() => ship.hull?.data, null);
         string geometry = "geometry=not-run";
         float speed = hullData != null
             ? ApplyOptimalSpeed(ship, hullData)
             : Safe(() => ship.speedMax / KnotsToMetersPerSecond, 0f);
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplyOptimalSpeed", $"speed={Fmt(speed)}kn", traceWeightBefore);
+
         float tons;
         if (hullData != null)
         {
-            GeometryDefaultSummary geometrySummary = ApplySmartAiMinimumGeometry(ship, hullData);
+            GeometryDefaultSummary geometrySummary = ApplySmartAiGeometryDefaults(ship, hullData);
             geometry = geometrySummary.Detail;
             tons = geometrySummary.Applied
                 ? Safe(() => ship.Tonnage(), geometrySummary.FinalTonnageTarget)
@@ -125,21 +133,39 @@ internal static class DesignNewHullDefaultsPatch
         {
             tons = Safe(() => ship.Tonnage(), 0f);
         }
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplySmartAiGeometryDefaults-ApplyMaxTonnage", $"{geometry}_tons={Fmt(tons)}", traceWeightBefore);
 
         RangeCrewQuartersDefaults rangeDefaults = ApplySmartAiRangeCrewAndQuarters(ship);
-        ComponentInstallSummary components = ApplyBestComponents(ship);
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplySmartAiRangeCrewAndQuarters", $"range={rangeDefaults.Range}_crew={rangeDefaults.CrewTraining}_quarters={rangeDefaults.Quarters}", traceWeightBefore);
+
+        ComponentInstallSummary components = ApplyBestComponents(ship, traceWeight);
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplyBestComponents", $"components={components.Installed}/{components.Attempted}_engine={components.EngineLabel}_rudder={components.RudderLabel}", traceWeightBefore);
+
         ArmamentInstallSummary armament = includePartDependentDefaults && HasGun(ship)
-            ? ApplyArmamentComponents(ship)
+            ? ApplyArmamentComponents(ship, traceWeight)
             : ArmamentInstallSummary.Empty;
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplyArmamentComponents", $"armament={armament.Installed}/{armament.Attempted}_components={armament.ComponentsText}", traceWeightBefore);
+
         EquipmentInstallSummary equipment = includePartDependentDefaults && HasMainTower(ship)
-            ? ApplyEquipmentComponents(ship)
+            ? ApplyEquipmentComponents(ship, traceWeight)
             : EquipmentInstallSummary.Empty;
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplyEquipmentComponents", $"equipment={equipment.Installed}/{equipment.Attempted}_components={equipment.ComponentsText}", traceWeightBefore);
+
         TorpedoInstallSummary torpedoes = includePartDependentDefaults && HasTorpedoLauncher(ship)
-            ? ApplyTorpedoComponents(ship)
+            ? ApplyTorpedoComponents(ship, traceWeight)
             : TorpedoInstallSummary.Empty;
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplyTorpedoComponents", $"torpedoes={torpedoes.Installed}/{torpedoes.Attempted}_component={torpedoes.ComponentText}", traceWeightBefore);
 
         try { ship.CalcWeightAndCost(true, true); }
         catch { }
+        if (traceWeight)
+            TraceSmartAiDefaultWeight(ship, "final-after-CalcWeightAndCost", "done", traceWeightBefore);
 
         return
             $"hull={Token(hullData)} " +
@@ -148,6 +174,42 @@ internal static class DesignNewHullDefaultsPatch
             $"{geometry} " +
             $"range={rangeDefaults.Range} crew={rangeDefaults.CrewTraining} quarters={rangeDefaults.Quarters} " +
             $"components={components.Installed}/{components.Attempted} engine={components.EngineLabel} " +
+            $"armament={armament.Installed}/{armament.Attempted} " +
+            $"equipment={equipment.Installed}/{equipment.Attempted} " +
+            $"torpedoes={torpedoes.Installed}/{torpedoes.Attempted}";
+    }
+
+    internal static string ApplySmartAiPartDependentDefaults(Ship ship, bool traceWeight = false)
+    {
+        float traceWeightBefore = traceWeight
+            ? TraceSmartAiDefaultWeight(ship, "start-part-dependent-defaults", "partDependentOnly=true")
+            : float.NaN;
+
+        ArmamentInstallSummary armament = HasGun(ship)
+            ? ApplyArmamentComponents(ship, traceWeight)
+            : ArmamentInstallSummary.Empty;
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplyArmamentComponents", $"armament={armament.Installed}/{armament.Attempted}_components={armament.ComponentsText}", traceWeightBefore);
+
+        EquipmentInstallSummary equipment = HasMainTower(ship)
+            ? ApplyEquipmentComponents(ship, traceWeight)
+            : EquipmentInstallSummary.Empty;
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplyEquipmentComponents", $"equipment={equipment.Installed}/{equipment.Attempted}_components={equipment.ComponentsText}", traceWeightBefore);
+
+        TorpedoInstallSummary torpedoes = HasTorpedoLauncher(ship)
+            ? ApplyTorpedoComponents(ship, traceWeight)
+            : TorpedoInstallSummary.Empty;
+        if (traceWeight)
+            traceWeightBefore = TraceSmartAiDefaultWeight(ship, "after-ApplyTorpedoComponents", $"torpedoes={torpedoes.Installed}/{torpedoes.Attempted}_component={torpedoes.ComponentText}", traceWeightBefore);
+
+        try { ship.CalcWeightAndCost(true, true); }
+        catch { }
+        if (traceWeight)
+            TraceSmartAiDefaultWeight(ship, "final-after-part-dependent-CalcWeightAndCost", "done", traceWeightBefore);
+
+        return
+            "partDependentOnly=true " +
             $"armament={armament.Installed}/{armament.Attempted} " +
             $"equipment={equipment.Installed}/{equipment.Attempted} " +
             $"torpedoes={torpedoes.Installed}/{torpedoes.Attempted}";
@@ -415,12 +477,16 @@ internal static class DesignNewHullDefaultsPatch
         return Safe(() => ship.Tonnage(), target);
     }
 
-    private static GeometryDefaultSummary ApplySmartAiMinimumGeometry(Ship ship, PartData hullData)
+    private static GeometryDefaultSummary ApplySmartAiGeometryDefaults(Ship ship, PartData hullData)
     {
         string geometryKind = SmartAiMinimumGeometryKind(ship, hullData);
-        if (string.IsNullOrWhiteSpace(geometryKind))
-            return new GeometryDefaultSummary(false, "geometry=default", 0f, 0f);
+        return string.IsNullOrWhiteSpace(geometryKind)
+            ? ApplySmartAiNeutralGeometry(ship, hullData)
+            : ApplySmartAiMinimumGeometry(ship, hullData, geometryKind);
+    }
 
+    private static GeometryDefaultSummary ApplySmartAiMinimumGeometry(Ship ship, PartData hullData, string geometryKind)
+    {
         float beforeBeam = Safe(() => ship.Beam(), 0f);
         float beforeDraught = Safe(() => ship.Draught(), 0f);
         float beforeBonus = Safe(() => ship.BeamDraughtBonus(), 1f);
@@ -468,6 +534,50 @@ internal static class DesignNewHullDefaultsPatch
             $"geometry={geometryKind}:min_beam={Fmt(beforeBeam)}->{Fmt(afterBeam)}_draught={Fmt(beforeDraught)}->{Fmt(afterDraught)}_bonus={Fmt(beforeBonus)}->{Fmt(afterBonus)}_tons={Fmt(beforeTons)}->{Fmt(afterTons)}_targetFinal={Fmt(targetFinalTons)}_setArg={Fmt(setArg)}",
             targetFinalTons,
             setArg);
+    }
+
+    private static GeometryDefaultSummary ApplySmartAiNeutralGeometry(Ship ship, PartData hullData)
+    {
+        float beforeBeam = Safe(() => ship.Beam(), 0f);
+        float beforeDraught = Safe(() => ship.Draught(), 0f);
+        float beforeBonus = Safe(() => ship.BeamDraughtBonus(), 1f);
+        float beforeTons = Safe(() => ship.Tonnage(), 0f);
+
+        float minBeam = Safe(() => ship.BeamMin(), -100f);
+        float maxBeam = Safe(() => ship.BeamMax(), 100f);
+        float minDraught = Safe(() => ship.DraughtMin(), -100f);
+        float maxDraught = Safe(() => ship.DraughtMax(), 100f);
+        if (!IsSaneBeamDraughtSlider(minBeam) ||
+            !IsSaneBeamDraughtSlider(maxBeam) ||
+            !IsSaneBeamDraughtSlider(minDraught) ||
+            !IsSaneBeamDraughtSlider(maxDraught) ||
+            maxBeam < minBeam ||
+            maxDraught < minDraught ||
+            minBeam > 0f ||
+            maxBeam < 0f ||
+            minDraught > 0f ||
+            maxDraught < 0f)
+        {
+            return new GeometryDefaultSummary(
+                false,
+                $"geometry=neutral:skipped_invalid_beam={Fmt(minBeam)}/{Fmt(maxBeam)}_draught={Fmt(minDraught)}/{Fmt(maxDraught)}",
+                0f,
+                0f);
+        }
+
+        ship.SetBeam(0f, false);
+        ship.SetDraught(0f, false);
+
+        float afterBeam = Safe(() => ship.Beam(), 0f);
+        float afterDraught = Safe(() => ship.Draught(), 0f);
+        float afterBonus = Safe(() => ship.BeamDraughtBonus(), 1f);
+        float afterTons = Safe(() => ship.Tonnage(), beforeTons);
+
+        return new GeometryDefaultSummary(
+            false,
+            $"geometry=neutral:beam={Fmt(beforeBeam)}->{Fmt(afterBeam)}_draught={Fmt(beforeDraught)}->{Fmt(afterDraught)}_bonus={Fmt(beforeBonus)}->{Fmt(afterBonus)}_tonsBeforeTonnage={Fmt(beforeTons)}->{Fmt(afterTons)}",
+            0f,
+            0f);
     }
 
     private static string SmartAiMinimumGeometryKind(Ship ship, PartData hullData)
@@ -529,7 +639,7 @@ internal static class DesignNewHullDefaultsPatch
             quarters.ToString());
     }
 
-    private static ComponentInstallSummary ApplyBestComponents(Ship ship)
+    private static ComponentInstallSummary ApplyBestComponents(Ship ship, bool traceWeight = false)
     {
         List<ComponentData> components = AllComponents();
         string[] slots =
@@ -563,10 +673,25 @@ internal static class DesignNewHullDefaultsPatch
                 continue;
 
             attempted++;
-            if (!Safe(() => ship.InstallComponent(candidate, true), false))
+            float beforeWeight = traceWeight ? TraceWeightNow(ship) : float.NaN;
+            string currentBefore = traceWeight ? CurrentComponentLabel(ship, candidate) : "n/a";
+            bool installedCandidate = Safe(() => ship.InstallComponent(candidate, true), false);
+            if (!installedCandidate)
             {
                 if (string.Equals(slot, "engine", StringComparison.OrdinalIgnoreCase))
-                    engineLabel = "install-failed:" + Token(candidate);
+                    engineLabel =
+                        "install-failed:" + Token(candidate) +
+                        "_reason=" + LogToken(ComponentAvailabilityReason(ship, candidate)) +
+                        "_current=" + LogToken(CurrentComponentLabel(ship, candidate));
+                if (traceWeight)
+                    TraceComponentInstall(
+                        ship,
+                        "component-install",
+                        slot,
+                        candidate,
+                        installed: false,
+                        beforeWeight,
+                        $"reason={LogToken(ComponentAvailabilityReason(ship, candidate))}_currentBefore={LogToken(currentBefore)}");
                 continue;
             }
 
@@ -575,6 +700,15 @@ internal static class DesignNewHullDefaultsPatch
                 engineLabel = Token(candidate);
             if (string.Equals(slot, "rudder", StringComparison.OrdinalIgnoreCase))
                 rudderLabel = Token(candidate);
+            if (traceWeight)
+                TraceComponentInstall(
+                    ship,
+                    "component-install",
+                    slot,
+                    candidate,
+                    installed: true,
+                    beforeWeight,
+                    $"currentBefore={LogToken(currentBefore)}");
         }
 
         return new ComponentInstallSummary(attempted, installed, engineLabel, rudderLabel);
@@ -719,7 +853,7 @@ internal static class DesignNewHullDefaultsPatch
         }
     }
 
-    private static ArmamentInstallSummary ApplyArmamentComponents(Ship ship)
+    private static ArmamentInstallSummary ApplyArmamentComponents(Ship ship, bool traceWeight = false)
     {
         string[][] rankedFamilies =
         {
@@ -743,21 +877,56 @@ internal static class DesignNewHullDefaultsPatch
                 continue;
 
             attempted++;
+            string family = rankedKeys.Length > 0 ? rankedKeys[0] : "unknown";
+            float beforeWeight = traceWeight ? TraceWeightNow(ship) : float.NaN;
+            string currentBefore = traceWeight ? CurrentComponentLabel(ship, component) : "n/a";
             if (CurrentComponentMatches(ship, component))
+            {
+                if (traceWeight)
+                    TraceComponentInstall(
+                        ship,
+                        "armament-install",
+                        family,
+                        component,
+                        installed: false,
+                        beforeWeight,
+                        $"alreadySet=true_currentBefore={LogToken(currentBefore)}");
                 continue;
+            }
 
-            if (!Safe(() => ship.InstallComponent(component, true), false))
+            bool installedComponent = Safe(() => ship.InstallComponent(component, true), false);
+            if (!installedComponent)
+            {
+                if (traceWeight)
+                    TraceComponentInstall(
+                        ship,
+                        "armament-install",
+                        family,
+                        component,
+                        installed: false,
+                        beforeWeight,
+                        $"reason={LogToken(ComponentAvailabilityReason(ship, component))}_currentBefore={LogToken(currentBefore)}");
                 continue;
+            }
 
             installed++;
             labels.Add(Token(component));
+            if (traceWeight)
+                TraceComponentInstall(
+                    ship,
+                    "armament-install",
+                    family,
+                    component,
+                    installed: true,
+                    beforeWeight,
+                    $"currentBefore={LogToken(currentBefore)}");
         }
 
         string text = labels.Count == 0 ? "already-set" : string.Join(",", labels.Select(LogToken));
         return new ArmamentInstallSummary(attempted, installed, text);
     }
 
-    private static EquipmentInstallSummary ApplyEquipmentComponents(Ship ship)
+    private static EquipmentInstallSummary ApplyEquipmentComponents(Ship ship, bool traceWeight = false)
     {
         string[][] rankedFamilies =
         {
@@ -777,21 +946,56 @@ internal static class DesignNewHullDefaultsPatch
                 continue;
 
             attempted++;
+            string family = rankedKeys.Length > 0 ? rankedKeys[0] : "unknown";
+            float beforeWeight = traceWeight ? TraceWeightNow(ship) : float.NaN;
+            string currentBefore = traceWeight ? CurrentComponentLabel(ship, component) : "n/a";
             if (CurrentComponentMatches(ship, component))
+            {
+                if (traceWeight)
+                    TraceComponentInstall(
+                        ship,
+                        "equipment-install",
+                        family,
+                        component,
+                        installed: false,
+                        beforeWeight,
+                        $"alreadySet=true_currentBefore={LogToken(currentBefore)}");
                 continue;
+            }
 
-            if (!Safe(() => ship.InstallComponent(component, true), false))
+            bool installedComponent = Safe(() => ship.InstallComponent(component, true), false);
+            if (!installedComponent)
+            {
+                if (traceWeight)
+                    TraceComponentInstall(
+                        ship,
+                        "equipment-install",
+                        family,
+                        component,
+                        installed: false,
+                        beforeWeight,
+                        $"reason={LogToken(ComponentAvailabilityReason(ship, component))}_currentBefore={LogToken(currentBefore)}");
                 continue;
+            }
 
             installed++;
             labels.Add(Token(component));
+            if (traceWeight)
+                TraceComponentInstall(
+                    ship,
+                    "equipment-install",
+                    family,
+                    component,
+                    installed: true,
+                    beforeWeight,
+                    $"currentBefore={LogToken(currentBefore)}");
         }
 
         string text = labels.Count == 0 ? "already-set" : string.Join(",", labels.Select(LogToken));
         return new EquipmentInstallSummary(attempted, installed, text);
     }
 
-    private static TorpedoInstallSummary ApplyTorpedoComponents(Ship ship)
+    private static TorpedoInstallSummary ApplyTorpedoComponents(Ship ship, bool traceWeight = false)
     {
         string[] rankedKeys =
         {
@@ -811,12 +1015,46 @@ internal static class DesignNewHullDefaultsPatch
         if (component == null)
             return TorpedoInstallSummary.Empty;
 
+        float beforeWeight = traceWeight ? TraceWeightNow(ship) : float.NaN;
+        string currentBefore = traceWeight ? CurrentComponentLabel(ship, component) : "n/a";
         if (CurrentComponentMatches(ship, component))
+        {
+            if (traceWeight)
+                TraceComponentInstall(
+                    ship,
+                    "torpedo-install",
+                    "torpedo_diameter",
+                    component,
+                    installed: false,
+                    beforeWeight,
+                    $"alreadySet=true_currentBefore={LogToken(currentBefore)}");
             return new TorpedoInstallSummary(1, 0, "already-set");
+        }
 
-        if (!Safe(() => ship.InstallComponent(component, true), false))
+        bool installedComponent = Safe(() => ship.InstallComponent(component, true), false);
+        if (!installedComponent)
+        {
+            if (traceWeight)
+                TraceComponentInstall(
+                    ship,
+                    "torpedo-install",
+                    "torpedo_diameter",
+                    component,
+                    installed: false,
+                    beforeWeight,
+                    $"reason={LogToken(ComponentAvailabilityReason(ship, component))}_currentBefore={LogToken(currentBefore)}");
             return new TorpedoInstallSummary(1, 0, "install-failed");
+        }
 
+        if (traceWeight)
+            TraceComponentInstall(
+                ship,
+                "torpedo-install",
+                "torpedo_diameter",
+                component,
+                installed: true,
+                beforeWeight,
+                $"currentBefore={LogToken(currentBefore)}");
         return new TorpedoInstallSummary(1, 1, LogToken(Token(component)));
     }
 
@@ -866,6 +1104,143 @@ internal static class DesignNewHullDefaultsPatch
         {
             return false;
         }
+    }
+
+    private static void TraceComponentInstall(
+        Ship ship,
+        string phase,
+        string slot,
+        ComponentData component,
+        bool installed,
+        float beforeWeight,
+        string detail)
+    {
+        TraceSmartAiDefaultWeight(
+            ship,
+            phase,
+            $"slot={LogToken(slot)}_candidate={LogToken(Token(component))}_installed={installed}_detail={LogToken(detail)}",
+            beforeWeight);
+    }
+
+    private static float TraceSmartAiDefaultWeight(Ship ship, string phase, string detail, float beforeWeight = float.NaN)
+    {
+        try
+        {
+            float afterWeight = TraceWeightNow(ship);
+            float capacity = Safe(() => ship.Tonnage(), 0f);
+            bool valid = TraceWeightValidity(ship, out string reason);
+            float delta = float.IsNaN(beforeWeight) ? float.NaN : afterWeight - beforeWeight;
+            PartData? hullData = Safe(() => ship.hull?.data, null);
+            string nation = AiDesignCompetitiveness.PlayerLabel(Safe(() => ship.player, null));
+            string type = SafeString(() => ship.shipType?.name, "unknown");
+
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"{LogPrefix}: smart AI defaults trace: " +
+                $"ship={LogToken(ShipLabel(ship))} nation={LogToken(nation)} type={LogToken(type)} hull={LogToken(Token(hullData))} " +
+                $"phase={LogToken(phase)} detail={LogToken(detail)} " +
+                $"weightBefore={FmtTrace(beforeWeight)} weightAfter={FmtTrace(afterWeight)} delta={FmtTrace(delta)} capacity={FmtTrace(capacity)} " +
+                $"valid={valid} reason={LogToken(reason)} parts={Safe(() => ship.parts?.Count ?? 0, 0)} components={Safe(() => ship.components?.Count ?? 0, 0)} " +
+                $"guns={ShortTraceToken(TraceGunRows(ship), 360)}");
+
+            return afterWeight;
+        }
+        catch (Exception ex)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Warning(
+                $"{LogPrefix}: smart AI defaults trace failed phase={LogToken(phase)} detail={LogToken(detail)}. {ex.GetType().Name}: {ex.Message}");
+            return beforeWeight;
+        }
+    }
+
+    private static float TraceWeightNow(Ship ship)
+    {
+        try { ship.CalcWeightAndCost(true, true); }
+        catch { }
+
+        return Safe(() => ship.Weight(true, true), Safe(() => ship.Weight(), 0f));
+    }
+
+    private static bool TraceWeightValidity(Ship ship, out string reason)
+    {
+        try
+        {
+            bool valid = ship.IsValidCostWeightBarbette(
+                out string rawReason,
+                out Il2CppSystem.Collections.Generic.List<Part> _);
+            reason = valid ? "valid" : NormalizeTraceReason(rawReason);
+            return valid;
+        }
+        catch (Exception ex)
+        {
+            reason = "check:" + ex.GetType().Name;
+            return false;
+        }
+    }
+
+    private static string TraceGunRows(Ship ship)
+    {
+        List<string> labels = new();
+        try
+        {
+            var rows = ship.shipGunCaliber;
+            if (rows == null)
+                return "none";
+
+            foreach (Ship.TurretCaliber row in rows)
+            {
+                PartData? data = Safe(() => row.turretPartData, null);
+                labels.Add(
+                    $"{LogToken(Token(data))}:dia={Fmt(Safe(() => row.diameter, 0f))}:len={Safe(() => row.length, 0).ToString(CultureInfo.InvariantCulture)}");
+            }
+        }
+        catch (Exception ex)
+        {
+            labels.Add("error:" + ex.GetType().Name);
+        }
+
+        return JoinTraceLimited(labels, 16);
+    }
+
+    private static string JoinTraceLimited(IEnumerable<string> values, int maxItems)
+    {
+        List<string> items = values
+            .Where(static value => !string.IsNullOrWhiteSpace(value))
+            .Take(maxItems + 1)
+            .ToList();
+        if (items.Count == 0)
+            return "none";
+
+        bool hidden = items.Count > maxItems;
+        if (hidden)
+            items.RemoveAt(items.Count - 1);
+
+        if (hidden)
+            items.Add("+more");
+
+        return string.Join(",", items);
+    }
+
+    private static string NormalizeTraceReason(string? reason)
+    {
+        if (string.IsNullOrWhiteSpace(reason))
+            return "unknown";
+
+        string normalized = reason.Trim().Trim('$');
+        normalized = normalized.Replace("Ui_Constr_", string.Empty, StringComparison.OrdinalIgnoreCase);
+        normalized = normalized.Replace(" ", string.Empty, StringComparison.OrdinalIgnoreCase);
+        return string.IsNullOrWhiteSpace(normalized) ? "unknown" : normalized;
+    }
+
+    private static string FmtTrace(float value)
+        => float.IsNaN(value) || float.IsInfinity(value) ? "n/a" : Fmt(value);
+
+    private static string ShortTraceToken(string? value, int maxLength)
+    {
+        string token = LogToken(value);
+        if (token.Length <= maxLength)
+            return token;
+
+        return token[..Math.Max(0, maxLength)] + "...";
     }
 
     private static bool SameComponent(ComponentData? a, ComponentData? b)
@@ -1003,6 +1378,46 @@ internal static class DesignNewHullDefaultsPatch
         {
             return false;
         }
+    }
+
+    private static string ComponentAvailabilityReason(Ship ship, ComponentData component)
+    {
+        try
+        {
+            if (!component.enabled)
+                return "disabled";
+
+            string reason;
+            bool available = ship.IsComponentAvailable(component, out reason);
+            string normalized = string.IsNullOrWhiteSpace(reason)
+                ? "none"
+                : reason.Trim().Trim('$').Replace(" ", string.Empty, StringComparison.OrdinalIgnoreCase);
+            return available ? "available:" + normalized : "unavailable:" + normalized;
+        }
+        catch (Exception ex)
+        {
+            return "check:" + ex.GetType().Name;
+        }
+    }
+
+    private static string CurrentComponentLabel(Ship ship, ComponentData component)
+    {
+        try
+        {
+            var components = ship.components;
+            if (components == null)
+                return "none";
+
+            CompType slot = component.typex;
+            if (components.TryGetValue(slot, out ComponentData current) && current != null)
+                return Token(current);
+        }
+        catch (Exception ex)
+        {
+            return "error:" + ex.GetType().Name;
+        }
+
+        return "none";
     }
 
     private static bool ComponentMatchesSlot(ComponentData? component, string slot)
