@@ -16,6 +16,7 @@ namespace UADVanillaPlus.Services;
 internal static class SmartRefitService
 {
     private const string LogPrefix = "UADVP smart refit";
+    private static bool VerboseAiRefitDiagnostics => false;
     private static readonly MethodInfo? LoadUnloadModelMethod =
         AccessTools.Method(typeof(Ship), "LoadUnloadModel", new[] { typeof(bool) });
     private static readonly PropertyInfo? ShipDecorProperty =
@@ -207,7 +208,7 @@ internal static class SmartRefitService
         }
     }
 
-    internal static string TryUnloadShipPartModels(Ship? ship, string reason)
+    internal static string TryUnloadShipPartModels(Ship? ship, string reason, bool logDetails = true)
     {
         if (ship == null)
             return "unloadModels=0_unloadFailures=0_ship=null";
@@ -218,20 +219,25 @@ internal static class SmartRefitService
             TryUnloadPartModel(part, reason, ref unloaded, ref failures);
 
         string summary = $"unloadModels={unloaded}_unloadFailures={failures}";
-        Melon<UADVanillaPlusMod>.Logger.Msg(
-            $"{LogPrefix}: unload-models reason={LogToken(reason)} ship={LogToken(ShipLabel(ship))} {summary}.");
+        if (logDetails)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"{LogPrefix}: unload-models reason={LogToken(reason)} ship={LogToken(ShipLabel(ship))} {summary}.");
+        }
+
         return summary;
     }
 
-    internal static string TryCleanupConstructorDecor(Ship? ship, string reason)
+    internal static string TryCleanupConstructorDecor(Ship? ship, string reason, bool logDetails = true)
     {
         if (ship == null)
             return "decorCleanup=false_ship=null";
 
-        LogDecorAccessorResolutionOnce();
+        if (logDetails)
+            LogDecorAccessorResolutionOnce();
         if (!HasDecorReadAccessor())
         {
-            if (!loggedMissingDecorAccessor)
+            if (logDetails && !loggedMissingDecorAccessor)
             {
                 loggedMissingDecorAccessor = true;
                 Melon<UADVanillaPlusMod>.Logger.Warning(
@@ -316,7 +322,7 @@ internal static class SmartRefitService
         string summary =
             $"decorCleanup=true_decor={decorCount}_children={childrenCount}_hidden={hiddenDecor}_childHidden={hiddenChildren}_" +
             $"destroyed={destroyedChildren}_childrenCleared={childrenCleared}_decorCleared={decorListCleared}_accessor={accessor}_setter={setter}_failures={failures}";
-        if (decorCount > 0 || childrenCount > 0 || failures > 0)
+        if (logDetails && (decorCount > 0 || childrenCount > 0 || failures > 0))
         {
             Melon<UADVanillaPlusMod>.Logger.Msg(
                 $"{LogPrefix}: constructor-decor-cleanup reason={LogToken(reason)} ship={LogToken(ShipLabel(ship))} {summary}.");
@@ -325,13 +331,13 @@ internal static class SmartRefitService
         return summary;
     }
 
-    internal static string CleanupConstructorVisualsBeforeLeave(Ship? ship, string reason, bool leaveConstructor = true)
+    internal static string CleanupConstructorVisualsBeforeLeave(Ship? ship, string reason, bool leaveConstructor = true, bool logDetails = true)
     {
         if (ship == null)
             return "constructorVisualCleanup=false_ship=null";
 
-        string preDecor = TryCleanupConstructorDecor(ship, reason + "-pre-leave");
-        string preUnload = TryUnloadShipPartModels(ship, reason + "-pre-leave");
+        string preDecor = TryCleanupConstructorDecor(ship, reason + "-pre-leave", logDetails);
+        string preUnload = TryUnloadShipPartModels(ship, reason + "-pre-leave", logDetails);
         bool leave = false;
         int leaveFailures = 0;
         if (leaveConstructor)
@@ -347,12 +353,16 @@ internal static class SmartRefitService
             }
         }
 
-        string postDecor = TryCleanupConstructorDecor(ship, reason + "-post-leave");
+        string postDecor = TryCleanupConstructorDecor(ship, reason + "-post-leave", logDetails);
         string summary =
             $"constructorVisualCleanup=true_preDecor={preDecor}_preUnload={preUnload}_leave={leave}_" +
             $"leaveFailures={leaveFailures}_postDecor={postDecor}";
-        Melon<UADVanillaPlusMod>.Logger.Msg(
-            $"{LogPrefix}: constructor-visual-cleanup reason={LogToken(reason)} ship={LogToken(ShipLabel(ship))} {summary}.");
+        if (logDetails)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"{LogPrefix}: constructor-visual-cleanup reason={LogToken(reason)} ship={LogToken(ShipLabel(ship))} {summary}.");
+        }
+
         return summary;
     }
 
@@ -1307,8 +1317,12 @@ internal static class SmartRefitService
                 if (string.Equals(normalizedReason, "obsolete", StringComparison.OrdinalIgnoreCase) &&
                     IsRefitDesignForBuildability(ship))
                 {
-                    Melon<UADVanillaPlusMod>.Logger.Msg(
-                        $"UADVP smart refits ai: buildability-obsolete-allowed design={LogToken(ShipLabel(ship))} reason={LogToken(normalizedReason)} waivedBadParts={reqValidation.WaivedBadParts} source=service-validation.");
+                    if (VerboseAiRefitDiagnostics)
+                    {
+                        Melon<UADVanillaPlusMod>.Logger.Msg(
+                            $"UADVP smart refits ai: buildability-obsolete-allowed design={LogToken(ShipLabel(ship))} reason={LogToken(normalizedReason)} waivedBadParts={reqValidation.WaivedBadParts} source=service-validation.");
+                    }
+
                     return new ValidationStatus(true, "valid");
                 }
 
@@ -1319,8 +1333,12 @@ internal static class SmartRefitService
                         out int waivedBadParts,
                         out string waiverDetails))
                 {
-                    Melon<UADVanillaPlusMod>.Logger.Msg(
-                        $"UADVP smart refits ai: buildability-waiver-allowed design={LogToken(ShipLabel(ship))} reason={LogToken(normalizedReason)} waivedBadParts={waivedBadParts} source=service-validation details={LogToken(waiverDetails)}.");
+                    if (VerboseAiRefitDiagnostics)
+                    {
+                        Melon<UADVanillaPlusMod>.Logger.Msg(
+                            $"UADVP smart refits ai: buildability-waiver-allowed design={LogToken(ShipLabel(ship))} reason={LogToken(normalizedReason)} waivedBadParts={waivedBadParts} source=service-validation details={LogToken(waiverDetails)}.");
+                    }
+
                     return new ValidationStatus(true, "valid");
                 }
 

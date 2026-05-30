@@ -481,18 +481,16 @@ internal static class ModSettings
         }
     }
 
-    // TODO release-disable: this temporary investigation diagnostic defaults on
-    // so current balance test builds emit battle-exit runtime summaries.
     internal static bool BattleRuntimeDiagnosticsEnabled
     {
-        get => battleRuntimeDiagnosticsEnabled ??= PlayerPrefs.GetInt(BattleRuntimeDiagnosticsEnabledKey, 1) != 0;
+        get => false;
         set
         {
-            battleRuntimeDiagnosticsEnabled = value;
-            PlayerPrefs.SetInt(BattleRuntimeDiagnosticsEnabledKey, value ? 1 : 0);
+            battleRuntimeDiagnosticsEnabled = false;
+            PlayerPrefs.SetInt(BattleRuntimeDiagnosticsEnabledKey, 0);
             PlayerPrefs.Save();
-            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Battle Runtime Diagnostics mode {BattleRuntimeDiagnosticsModeText(value)}.");
-            LogCurrentSettings("after Battle Runtime Diagnostics change");
+            if (value)
+                Melon<UADVanillaPlusMod>.Logger.Msg("UADVP option: Battle Runtime Diagnostics is hard-disabled in this build.");
         }
     }
 

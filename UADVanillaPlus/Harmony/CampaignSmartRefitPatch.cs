@@ -16,9 +16,11 @@ internal static class CampaignSmartRefitPatch
     private const string LogPrefix = "UADVP smart refits";
     private const string AiLogPrefix = "UADVP smart refits ai";
     private const string AiDebugLogPrefix = "UADVP smart refits ai-debug";
+    private static bool VerboseAiRefitDiagnostics => false;
     private const int MinAiRefitAgeYears = 4;
     private const int MaxAiRefitAttemptsPerNation = 2;
     private const int MaxShipsPerAiRefitStart = 8;
+    private const int MaxAiRefitSummaryDetails = 8;
     private static readonly bool AllowAiSmartRefitStarts = true;
     private static readonly bool RunPlacementProbeBeforeRealAiRefit = false;
     private static readonly AiPlacementProbeMode[] AiPlacementProbeModes =
@@ -29,6 +31,8 @@ internal static class CampaignSmartRefitPatch
     private static readonly HashSet<string> LoggedBlocks = new(StringComparer.Ordinal);
     private static readonly HashSet<string> LoggedCleanup = new(StringComparer.Ordinal);
     private static readonly HashSet<string> LoggedAiAttempts = new(StringComparer.Ordinal);
+    private static readonly Dictionary<string, AiSmartRefitTurnSummary> PendingAiRefitTurnSummaries = new(StringComparer.Ordinal);
+    private static readonly HashSet<string> LoggedEmptyAiRefitSummaries = new(StringComparer.Ordinal);
     private static readonly HashSet<long> InProgressSmartAiRefitDesigns = new();
     private static readonly HashSet<long> AcceptedSmartAiRefitDesigns = new();
     private static readonly Dictionary<Type, AiRefitStateMachineFields> AiRefitStateMachineFieldsByType = new();
@@ -129,8 +133,16 @@ internal static class CampaignSmartRefitPatch
         if (!ShouldProtectAiRefitDesignFromDeletion(owner, design, out string reason, out int liveRefs, out string liveRefExamples))
             return true;
 
-        Melon<UADVanillaPlusMod>.Logger.Msg(
-            $"{AiDebugLogPrefix}: delete-guard blocked source={LogToken(source)} nation={LogToken(AiDesignCompetitiveness.PlayerLabel(owner))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(reason)} liveRefs={liveRefs} liveRefExamples={LogToken(liveRefExamples)}.");
+        string nation = AiDesignCompetitiveness.PlayerLabel(owner);
+        RecordAiRefitSummary(
+            AiSmartRefitSummaryKind.DeleteGuard,
+            nation,
+            $"{nation} {ReadableDesignLabel(design)}: delete guard {reason} liveRefs={liveRefs}");
+        if (VerboseAiRefitDiagnostics)
+        {
+            Melon<UADVanillaPlusMod>.Logger.Msg(
+                $"{AiDebugLogPrefix}: delete-guard blocked source={LogToken(source)} nation={LogToken(nation)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(reason)} liveRefs={liveRefs} liveRefExamples={LogToken(liveRefExamples)}.");
+        }
         return false;
     }
 
@@ -169,6 +181,7 @@ internal static class CampaignSmartRefitPatch
 
             if (!force && !PassAiRefitChanceGate(player, out float chance, out float roll))
             {
+                RecordAiRefitSummary(AiSmartRefitSummaryKind.Skipped, nation, $"{nation}: skipped chance");
                 LogAi(
                     $"skip turn={LogToken(turn)} nation={LogToken(nation)} reason=chance chance={Fmt(chance)} roll={Fmt(roll)}.");
                 LogAi(
@@ -178,6 +191,7 @@ internal static class CampaignSmartRefitPatch
 
             if (!force && !PassAiRefitBudgetGate(player, out string budgetReason))
             {
+                RecordAiRefitSummary(AiSmartRefitSummaryKind.Skipped, nation, $"{nation}: skipped {ReadableLogText(budgetReason)}");
                 LogAi(
                     $"skip turn={LogToken(turn)} nation={LogToken(nation)} reason={LogToken(budgetReason)} cash={Fmt(Safe(() => player.cash, 0f))} revenue={Fmt(Safe(() => player.Revenue(), 0f))}.");
                 LogAi(
@@ -191,6 +205,7 @@ internal static class CampaignSmartRefitPatch
 
             if (groups.Count == 0)
             {
+                RecordAiRefitSummary(AiSmartRefitSummaryKind.Skipped, nation, $"{nation}: skipped no-candidates");
                 LogAi($"skip turn={LogToken(turn)} nation={LogToken(nation)} reason=no-candidates.");
                 LogAi(
                     $"done turn={LogToken(turn)} nation={LogToken(nation)} groups=0 attempts=0 started={continued} continued={continued} newStarted=0.");
@@ -256,6 +271,11 @@ internal static class CampaignSmartRefitPatch
         Ship? refitDesign = CreateAiSmartRefitDesign(player, source, out bool enteredConstructor, forceConstructor: true);
         if (refitDesign == null)
         {
+            RecordAiRefitSummary(
+                AiSmartRefitSummaryKind.Rejected,
+                nation,
+                $"{nation} {group.Type} {ReadableLogText(group.ClassName)}: rejected create-design-failed",
+                candidateTimer.ElapsedMilliseconds);
             LogAi(
                 $"cleanup nation={LogToken(nation)} type={group.Type} class={LogToken(group.ClassName)} reason=create-design-failed.");
             return false;
@@ -276,6 +296,11 @@ internal static class CampaignSmartRefitPatch
             if (!result.Success)
             {
                 CleanupAiSmartRefitDesign(player, refitDesign, "service-rejected");
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Rejected,
+                    nation,
+                    $"{nation} {group.Type} {ReadableDesignLabel(refitDesign)}: rejected {ReadableLogText(result.Message)}",
+                    candidateTimer.ElapsedMilliseconds);
                 LogAi(
                     $"candidate-finished nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} result=rejected elapsedMs={candidateTimer.ElapsedMilliseconds}.");
                 return false;
@@ -283,17 +308,30 @@ internal static class CampaignSmartRefitPatch
 
             if (!AllowAiSmartRefitStarts)
             {
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Skipped,
+                    nation,
+                    $"{nation} {group.Type} {ReadableDesignLabel(refitDesign)}: skipped start-deferred",
+                    candidateTimer.ElapsedMilliseconds);
                 LogAi(
                     $"start-deferred nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} reason=save-reference-guard elapsedMs={candidateTimer.ElapsedMilliseconds}.");
                 CleanupAiSmartRefitDesign(player, refitDesign, "start-deferred-save-reference-guard");
                 return false;
             }
 
-            SmartRefitService.CleanupConstructorVisualsBeforeLeave(refitDesign, "ai-success-before-buildability");
+            SmartRefitService.CleanupConstructorVisualsBeforeLeave(
+                refitDesign,
+                "ai-success-before-buildability",
+                logDetails: VerboseAiRefitDiagnostics);
             constructorVisualsCleaned = true;
             if (!CanBuildSmartRefitDesign(refitDesign, out string buildReason))
             {
                 CleanupAiSmartRefitDesign(player, refitDesign, "buildability-" + buildReason, constructorVisualsCleaned);
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Rejected,
+                    nation,
+                    $"{nation} {group.Type} {ReadableDesignLabel(refitDesign)}: rejected buildability-{ReadableLogText(buildReason)}",
+                    candidateTimer.ElapsedMilliseconds);
                 LogAi(
                     $"candidate-finished nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} result=buildability-rejected reason={LogToken(buildReason)} elapsedMs={candidateTimer.ElapsedMilliseconds}.");
                 return false;
@@ -303,6 +341,11 @@ internal static class CampaignSmartRefitPatch
             if (selection.Count == 0)
             {
                 CleanupAiSmartRefitDesign(player, refitDesign, "no-affordable-ships", constructorVisualsCleaned);
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Skipped,
+                    nation,
+                    $"{nation} {group.Type} {ReadableDesignLabel(refitDesign)}: skipped no-affordable-ships",
+                    candidateTimer.ElapsedMilliseconds);
                 LogAi(
                     $"candidate-finished nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} result=no-affordable-ships elapsedMs={candidateTimer.ElapsedMilliseconds}.");
                 return false;
@@ -320,11 +363,21 @@ internal static class CampaignSmartRefitPatch
                 $"inspect=AI_SMART_REFIT nation={LogToken(nation)} type={group.Type} source={LogLabel(AiDesignCompetitiveness.ShipLabel(source))} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} ships={selection.Count}.");
             LogAi(
                 $"start-refit nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} ships={selection.Count} costPerMonth={Fmt(costPerMonth)} cashAfter={Fmt(Safe(() => player.cash, 0f))} elapsedMs={candidateTimer.ElapsedMilliseconds}.");
+            RecordAiRefitSummary(
+                AiSmartRefitSummaryKind.Started,
+                nation,
+                $"{nation} {group.Type} {ReadableDesignLabel(refitDesign)}: started {selection.Count} ships, ${Fmt(costPerMonth)}/mo",
+                candidateTimer.ElapsedMilliseconds);
             return true;
         }
         catch (Exception ex)
         {
             CleanupAiSmartRefitDesign(player, refitDesign, "exception-" + ex.GetType().Name, constructorVisualsCleaned);
+            RecordAiRefitSummary(
+                AiSmartRefitSummaryKind.Rejected,
+                nation,
+                $"{nation} {group.Type} {ReadableDesignLabel(refitDesign)}: rejected exception-{ex.GetType().Name}",
+                candidateTimer.ElapsedMilliseconds);
             Melon<UADVanillaPlusMod>.Logger.Warning(
                 $"{AiLogPrefix}: failed candidate nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))}. {ex.GetType().Name}: {ex.Message}");
             return false;
@@ -355,6 +408,10 @@ internal static class CampaignSmartRefitPatch
 
             if (!CanBuildSmartRefitDesign(refitDesign, out string buildReason))
             {
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Rejected,
+                    nation,
+                    $"{nation} {ReadableDesignLabel(refitDesign)}: rejected buildability-{ReadableLogText(buildReason)}");
                 LogAi(
                     $"continue-skip nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} reason=buildability-{LogToken(buildReason)} candidates={candidates.Count} source=vp-smart-refit-existing.");
                 continue;
@@ -363,6 +420,10 @@ internal static class CampaignSmartRefitPatch
             Il2CppSystem.Collections.Generic.List<Ship> selection = SelectShipsForAiRefit(candidates, refitDesign, player, force);
             if (selection.Count == 0)
             {
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Skipped,
+                    nation,
+                    $"{nation} {ReadableDesignLabel(refitDesign)}: skipped no-affordable-ships");
                 LogAi(
                     $"continue-skip nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} reason=no-affordable-ships candidates={candidates.Count} costPerMonth={Fmt(Safe(() => refitDesign.RefitCostPerMonth(), 0f))} cash={Fmt(Safe(() => player.cash, 0f))} source=vp-smart-refit-existing.");
                 continue;
@@ -370,6 +431,10 @@ internal static class CampaignSmartRefitPatch
 
             if (PlayerController.Instance == null)
             {
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Skipped,
+                    nation,
+                    $"{nation} {ReadableDesignLabel(refitDesign)}: skipped no-player-controller");
                 LogAi(
                     $"continue-skip nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} reason=no-player-controller candidates={candidates.Count} source=vp-smart-refit-existing.");
                 continue;
@@ -387,11 +452,19 @@ internal static class CampaignSmartRefitPatch
                     SafeDo(() => player.cash -= costPerMonth * selection.Count);
 
                 result.Started++;
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Continued,
+                    nation,
+                    $"{nation} {ReadableDesignLabel(refitDesign)}: continued {selection.Count} ships, ${Fmt(costPerMonth)}/mo");
                 LogAi(
                     $"continue-refit nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} ships={selection.Count} candidates={candidates.Count} costPerMonth={Fmt(costPerMonth)} cashAfter={Fmt(Safe(() => player.cash, 0f))} source=vp-smart-refit-existing.");
             }
             catch (Exception ex)
             {
+                RecordAiRefitSummary(
+                    AiSmartRefitSummaryKind.Rejected,
+                    nation,
+                    $"{nation} {ReadableDesignLabel(refitDesign)}: rejected exception-{ex.GetType().Name}");
                 LogAi(
                     $"continue-skip nation={LogToken(nation)} design={LogLabel(AiDesignCompetitiveness.ShipLabel(refitDesign))} reason=exception-{LogToken(ex.GetType().Name)} candidates={candidates.Count} source=vp-smart-refit-existing.");
             }
@@ -435,6 +508,10 @@ internal static class CampaignSmartRefitPatch
                 continue;
             }
 
+            RecordAiRefitSummary(
+                AiSmartRefitSummaryKind.Skipped,
+                nation,
+                $"{nation} {group.Type} {ReadableLogText(group.ClassName)}: skipped continuation-covered");
             LogAi(
                 $"candidate-skip reason=continuation-covered nation={LogToken(nation)} type={group.Type} class={LogToken(group.ClassName)} key={LogToken(group.Key)} ships={group.Ships.Count}.");
         }
@@ -915,6 +992,9 @@ internal static class CampaignSmartRefitPatch
         bool loadVisualModels,
         bool forceConstructor)
     {
+        if (!VerboseAiRefitDiagnostics)
+            return;
+
         Melon<UADVanillaPlusMod>.Logger.Msg(
             $"{AiDebugLogPrefix}: pre-service context={LogToken(serviceContext)} nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(refitDesign))} source={LogToken(AiDesignCompetitiveness.ShipLabel(source))} isDesign={Safe(() => refitDesign.isDesign, false)} isRefitDesign={Safe(() => refitDesign.isRefitDesign, false)} isErased={Safe(() => refitDesign.isErased, false)} dateCreatedRefit={Safe(() => refitDesign.dateCreatedRefit.turn, -1)}/{Safe(() => refitDesign.dateCreatedRefit.AsDate().Year, -1)} parts={PartCount(refitDesign)} hullAndParts={HullAndPartsCount(refitDesign)} gunParts={GunPartCount(refitDesign)} mainGuns={MainGunCount(refitDesign)} partsCont={(Safe(() => refitDesign.partsCont != null, false) ? "yes" : "no")} baseline={(Safe(() => refitDesign.designShipForRefit != null, false) ? "yes" : "no")} constructor={GameManager.IsConstructor} forceConstructor={forceConstructor} enteredConstructor={enteredConstructor} modelLoad={loadVisualModels} startGuard={!AllowAiSmartRefitStarts}.");
     }
@@ -925,6 +1005,9 @@ internal static class CampaignSmartRefitPatch
         Il2CppSystem.Collections.Generic.List<Ship> selection,
         string stage)
     {
+        if (!VerboseAiRefitDiagnostics)
+            return;
+
         IsReferencedByLiveRefitShip(player, refitDesign, out int references, out string referenceExamples);
         string selected = string.Join(
             "|",
@@ -997,8 +1080,13 @@ internal static class CampaignSmartRefitPatch
     private static void LogCandidateSkipShip(Player player, Ship ship, string reason)
     {
         Ship? design = Safe(() => ship.design, null);
+        string nation = AiDesignCompetitiveness.PlayerLabel(player);
+        RecordAiRefitSummary(
+            AiSmartRefitSummaryKind.Skipped,
+            nation,
+            $"{ReadableLogText(nation)} {ReadableDesignLabel(design)}: skipped {ReadableLogText(reason)}");
         LogAi(
-            $"candidate-skip reason={LogToken(reason)} nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} ship={LogLabel(AiDesignCompetitiveness.ShipLabel(ship))} design={LogLabel(AiDesignCompetitiveness.ShipLabel(design))} status={LogToken(Safe(() => ship.status.ToString(), string.Empty))} refitDesignName={LogToken(Safe(() => ship.refitDesignName, string.Empty))}.");
+            $"candidate-skip reason={LogToken(reason)} nation={LogToken(nation)} ship={LogLabel(AiDesignCompetitiveness.ShipLabel(ship))} design={LogLabel(AiDesignCompetitiveness.ShipLabel(design))} status={LogToken(Safe(() => ship.status.ToString(), string.Empty))} refitDesignName={LogToken(Safe(() => ship.refitDesignName, string.Empty))}.");
     }
 
     private static bool IsRefittableStatus(Ship ship)
@@ -1113,7 +1201,10 @@ internal static class CampaignSmartRefitPatch
 
         if (!visualsAlreadyCleaned)
         {
-            SmartRefitService.CleanupConstructorVisualsBeforeLeave(design, "ai-cleanup-" + reason);
+            SmartRefitService.CleanupConstructorVisualsBeforeLeave(
+                design,
+                "ai-cleanup-" + reason,
+                logDetails: VerboseAiRefitDiagnostics);
             visualsAlreadyCleaned = true;
         }
 
@@ -1383,8 +1474,11 @@ internal static class CampaignSmartRefitPatch
                 {
                     if (ShouldProtectAiRefitDesignFromDeletion(player, design, out string protectReason, out int protectedRefs, out string protectedExamples))
                     {
-                        Melon<UADVanillaPlusMod>.Logger.Msg(
-                            $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} context={LogToken(context)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} liveRefs={protectedRefs} liveRefExamples={LogToken(protectedExamples)}.");
+                        if (VerboseAiRefitDiagnostics)
+                        {
+                            Melon<UADVanillaPlusMod>.Logger.Msg(
+                                $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} context={LogToken(context)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} liveRefs={protectedRefs} liveRefExamples={LogToken(protectedExamples)}.");
+                        }
                         CleanupProtectedAiRefitVisuals(player, design, context, protectReason);
                         continue;
                     }
@@ -1395,8 +1489,11 @@ internal static class CampaignSmartRefitPatch
                     }
 
                     IsReferencedByLiveRefitShip(player, design, out int liveRefs, out string liveRefExamples);
-                    Melon<UADVanillaPlusMod>.Logger.Msg(
-                        $"{AiDebugLogPrefix}: cleanup-candidate nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} context={LogToken(context)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} status={LogToken(Safe(() => design.status.ToString(), string.Empty))} isErased={Safe(() => design.isErased, false)} isRefitDesign={Safe(() => design.isRefitDesign, false)} dateCreatedRefit={Safe(() => design.dateCreatedRefit.turn, -1)}/{Safe(() => design.dateCreatedRefit.AsDate().Year, -1)} liveRefs={liveRefs} liveRefExamples={LogToken(liveRefExamples)}.");
+                    if (VerboseAiRefitDiagnostics)
+                    {
+                        Melon<UADVanillaPlusMod>.Logger.Msg(
+                            $"{AiDebugLogPrefix}: cleanup-candidate nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} context={LogToken(context)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} status={LogToken(Safe(() => design.status.ToString(), string.Empty))} isErased={Safe(() => design.isErased, false)} isRefitDesign={Safe(() => design.isRefitDesign, false)} dateCreatedRefit={Safe(() => design.dateCreatedRefit.turn, -1)}/{Safe(() => design.dateCreatedRefit.AsDate().Year, -1)} liveRefs={liveRefs} liveRefExamples={LogToken(liveRefExamples)}.");
+                    }
 
                     if (TryRemoveAiRefitDesign(player, design))
                     {
@@ -1650,23 +1747,32 @@ internal static class CampaignSmartRefitPatch
     {
         if (!Safe(() => design.isDesign, false))
         {
-            Melon<UADVanillaPlusMod>.Logger.Msg(
-                $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason=not-design-row status={LogToken(Safe(() => design.status.ToString(), string.Empty))} isRefitDesign={Safe(() => design.isRefitDesign, false)}.");
+            if (VerboseAiRefitDiagnostics)
+            {
+                Melon<UADVanillaPlusMod>.Logger.Msg(
+                    $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason=not-design-row status={LogToken(Safe(() => design.status.ToString(), string.Empty))} isRefitDesign={Safe(() => design.isRefitDesign, false)}.");
+            }
             return false;
         }
 
         if (ShouldProtectAiRefitDesignFromDeletion(player, design, out string protectReason, out int protectedRefs, out string protectedExamples))
         {
-            Melon<UADVanillaPlusMod>.Logger.Msg(
-                $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} liveRefs={protectedRefs} liveRefExamples={LogToken(protectedExamples)}.");
+            if (VerboseAiRefitDiagnostics)
+            {
+                Melon<UADVanillaPlusMod>.Logger.Msg(
+                    $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} liveRefs={protectedRefs} liveRefExamples={LogToken(protectedExamples)}.");
+            }
             CleanupProtectedAiRefitVisuals(player, design, "try-remove", protectReason);
             return false;
         }
 
         if (IsReferencedByLiveRefitShip(player, design, out int references, out string referenceExamples))
         {
-            Melon<UADVanillaPlusMod>.Logger.Msg(
-                $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason=referenced-before-delete liveRefs={references} liveRefExamples={LogToken(referenceExamples)}.");
+            if (VerboseAiRefitDiagnostics)
+            {
+                Melon<UADVanillaPlusMod>.Logger.Msg(
+                    $"{AiDebugLogPrefix}: cleanup-skip nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason=referenced-before-delete liveRefs={references} liveRefExamples={LogToken(referenceExamples)}.");
+            }
             return false;
         }
 
@@ -1674,7 +1780,10 @@ internal static class CampaignSmartRefitPatch
         UnregisterAcceptedSmartAiRefit(design);
         string visualSummary = visualsAlreadyCleaned
             ? "constructorVisualCleanup=skipped_already-cleaned"
-            : SmartRefitService.CleanupConstructorVisualsBeforeLeave(design, "ai-cleanup-before-delete");
+            : SmartRefitService.CleanupConstructorVisualsBeforeLeave(
+                design,
+                "ai-cleanup-before-delete",
+                logDetails: VerboseAiRefitDiagnostics);
         LogAi(
             $"cleanup-unload nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} visuals={LogToken(visualSummary)}.");
 
@@ -1709,9 +1818,21 @@ internal static class CampaignSmartRefitPatch
             return;
 
         string reason = "ai-protected-" + context + "-" + protectReason;
-        string visualSummary = SmartRefitService.CleanupConstructorVisualsBeforeLeave(design, reason);
-        LogAi(
-            $"protected-cleanup nation={LogToken(AiDesignCompetitiveness.PlayerLabel(player))} context={LogToken(context)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} visuals={LogToken(visualSummary)}.");
+        string visualSummary = SmartRefitService.CleanupConstructorVisualsBeforeLeave(
+            design,
+            reason,
+            logDetails: VerboseAiRefitDiagnostics);
+        string nation = AiDesignCompetitiveness.PlayerLabel(player);
+        IsReferencedByLiveRefitShip(player, design, out int liveRefs, out _);
+        RecordAiRefitSummary(
+            AiSmartRefitSummaryKind.Protected,
+            nation,
+            $"{nation} {ReadableDesignLabel(design)}: protected liveRefs={liveRefs}");
+        if (VerboseAiRefitDiagnostics)
+        {
+            LogAi(
+                $"protected-cleanup nation={LogToken(nation)} context={LogToken(context)} design={LogToken(AiDesignCompetitiveness.ShipLabel(design))} id={LogToken(AiDesignCompetitiveness.ShipId(design))} reason={LogToken(protectReason)} visuals={LogToken(visualSummary)}.");
+        }
     }
 
     private static bool IsAiRefitDesignLike(Ship? design)
@@ -1891,6 +2012,51 @@ internal static class CampaignSmartRefitPatch
         return $"\"{label}\"";
     }
 
+    private static string ReadableDesignLabel(Ship? ship)
+    {
+        if (ship == null)
+            return "?";
+
+        string label = AiDesignCompetitiveness.ShipLabel(ship);
+        int year = Safe(() => ship.dateCreatedRefit.AsDate().Year, 0);
+        if (year <= 0)
+            year = Safe(() => ship.dateCreated.AsDate().Year, 0);
+        return year > 0 ? $"{ReadableLogText(label)} ({year})" : ReadableLogText(label);
+    }
+
+    private static string ReadableLogText(string? value)
+    {
+        if (string.IsNullOrWhiteSpace(value))
+            return "?";
+
+        return value
+            .Trim()
+            .Replace("\r", " ")
+            .Replace("\n", " ")
+            .Replace("\t", " ")
+            .Replace(";", ",")
+            .Replace("|", "/")
+            .Replace("[", "(")
+            .Replace("]", ")");
+    }
+
+    private static string ExtractSkipReason(string? detail)
+    {
+        if (string.IsNullOrWhiteSpace(detail))
+            return "unknown";
+
+        int index = detail.IndexOf("skipped ", StringComparison.OrdinalIgnoreCase);
+        if (index < 0)
+            return "other";
+
+        string reason = detail[(index + "skipped ".Length)..].Trim();
+        int stop = reason.IndexOfAny(new[] { ' ', ',', ';', '|', '.' });
+        if (stop >= 0)
+            reason = reason[..stop];
+
+        return string.IsNullOrWhiteSpace(reason) ? "unknown" : ReadableLogText(reason);
+    }
+
     private static string NormalizeReason(string? reason)
     {
         if (string.IsNullOrWhiteSpace(reason))
@@ -1905,8 +2071,67 @@ internal static class CampaignSmartRefitPatch
     private static string Fmt(float value)
         => value.ToString("0.###", System.Globalization.CultureInfo.InvariantCulture);
 
+    internal static void FlushPendingAiRefitTurnSummariesAfterNextTurn()
+    {
+        if (!ModSettings.SmartRefitsEnabled && PendingAiRefitTurnSummaries.Count == 0)
+            return;
+
+        List<AiSmartRefitTurnSummary> summaries = PendingAiRefitTurnSummaries.Values
+            .OrderBy(summary => summary.TurnIndex)
+            .ThenBy(summary => summary.TurnLabel, StringComparer.Ordinal)
+            .ToList();
+        PendingAiRefitTurnSummaries.Clear();
+
+        if (summaries.Count == 0)
+        {
+            string turn = AiDesignCompetitiveness.CurrentTurnLabel();
+            string key = $"{AiDesignCompetitiveness.CurrentTurnIndex()}:{turn}:empty";
+            if (LoggedEmptyAiRefitSummaries.Add(key))
+                Melon<UADVanillaPlusMod>.Logger.Msg($"{AiLogPrefix} summary turn={LogToken(turn)} entries=0");
+            return;
+        }
+
+        foreach (AiSmartRefitTurnSummary summary in summaries)
+        {
+            try
+            {
+                Melon<UADVanillaPlusMod>.Logger.Msg(summary.ToLogLine());
+                LoggedEmptyAiRefitSummaries.Add($"{summary.TurnIndex}:{summary.TurnLabel}:empty");
+            }
+            catch (Exception ex)
+            {
+                Melon<UADVanillaPlusMod>.Logger.Warning(
+                    $"{AiLogPrefix}: summary flush failed for {LogToken(summary.TurnLabel)}. {ex.GetType().Name}: {ex.Message}");
+            }
+        }
+    }
+
+    private static void RecordAiRefitSummary(
+        AiSmartRefitSummaryKind kind,
+        string nation,
+        string detail,
+        long elapsedMs = 0L)
+    {
+        if (!ModSettings.SmartRefitsEnabled)
+            return;
+
+        int turnIndex = AiDesignCompetitiveness.CurrentTurnIndex();
+        string turn = AiDesignCompetitiveness.CurrentTurnLabel();
+        string key = $"{turnIndex}:{LogToken(turn)}";
+        if (!PendingAiRefitTurnSummaries.TryGetValue(key, out AiSmartRefitTurnSummary? summary))
+        {
+            summary = new AiSmartRefitTurnSummary(turnIndex, turn);
+            PendingAiRefitTurnSummaries[key] = summary;
+        }
+
+        summary.Add(kind, nation, detail, elapsedMs);
+    }
+
     private static void LogAi(string message)
     {
+        if (!VerboseAiRefitDiagnostics)
+            return;
+
         string key = $"{AiDesignCompetitiveness.CurrentTurnIndex()}|{message}";
         if (!LoggedAiAttempts.Add(key))
             return;
@@ -1975,6 +2200,101 @@ internal static class CampaignSmartRefitPatch
         catch
         {
             return fallback;
+        }
+    }
+
+    private enum AiSmartRefitSummaryKind
+    {
+        Started,
+        Continued,
+        Rejected,
+        Skipped,
+        Protected,
+        DeleteGuard
+    }
+
+    private sealed class AiSmartRefitTurnSummary
+    {
+        private readonly List<string> details = new();
+        private readonly Dictionary<string, int> skipReasons = new(StringComparer.OrdinalIgnoreCase);
+        private int hiddenDetails;
+
+        internal AiSmartRefitTurnSummary(int turnIndex, string turnLabel)
+        {
+            TurnIndex = turnIndex;
+            TurnLabel = turnLabel;
+        }
+
+        internal int TurnIndex { get; }
+        internal string TurnLabel { get; }
+        internal int Started { get; private set; }
+        internal int Continued { get; private set; }
+        internal int Rejected { get; private set; }
+        internal int Skipped { get; private set; }
+        internal int Protected { get; private set; }
+        internal int DeleteGuards { get; private set; }
+        internal long TotalMs { get; private set; }
+        internal long MaxMs { get; private set; }
+        internal int Entries => Started + Continued + Rejected + Skipped + Protected + DeleteGuards;
+
+        internal void Add(AiSmartRefitSummaryKind kind, string nation, string detail, long elapsedMs)
+        {
+            switch (kind)
+            {
+                case AiSmartRefitSummaryKind.Started:
+                    Started++;
+                    break;
+                case AiSmartRefitSummaryKind.Continued:
+                    Continued++;
+                    break;
+                case AiSmartRefitSummaryKind.Rejected:
+                    Rejected++;
+                    break;
+                case AiSmartRefitSummaryKind.Skipped:
+                    Skipped++;
+                    break;
+                case AiSmartRefitSummaryKind.Protected:
+                    Protected++;
+                    break;
+                case AiSmartRefitSummaryKind.DeleteGuard:
+                    DeleteGuards++;
+                    break;
+            }
+
+            if (elapsedMs > 0)
+            {
+                TotalMs += elapsedMs;
+                MaxMs = Math.Max(MaxMs, elapsedMs);
+            }
+
+            if (kind == AiSmartRefitSummaryKind.Skipped)
+            {
+                string skipReason = ExtractSkipReason(detail);
+                skipReasons.TryGetValue(skipReason, out int count);
+                skipReasons[skipReason] = count + 1;
+            }
+
+            if (details.Count < MaxAiRefitSummaryDetails)
+                details.Add(ReadableLogText(detail));
+            else
+                hiddenDetails++;
+        }
+
+        internal string ToLogLine()
+        {
+            if (Entries <= 0)
+                return $"{AiLogPrefix} summary turn={LogToken(TurnLabel)} entries=0";
+
+            string detailText = details.Count == 0 ? "none" : string.Join(" | ", details);
+            if (hiddenDetails > 0)
+                detailText += $" | +{hiddenDetails} more";
+
+            string skipReasonText = skipReasons.Count == 0
+                ? "none"
+                : string.Join(",", skipReasons.OrderBy(pair => pair.Key, StringComparer.OrdinalIgnoreCase).Select(pair => $"{pair.Key}:{pair.Value}"));
+
+            return
+                $"{AiLogPrefix} summary turn={LogToken(TurnLabel)} entries={Entries} started={Started} continued={Continued} rejected={Rejected} skipped={Skipped} protected={Protected} deleteGuards={DeleteGuards} skipReasons={skipReasonText} totalMs={TotalMs} maxMs={MaxMs} details={detailText}";
         }
     }
 
@@ -2202,6 +2522,30 @@ internal static class CampaignSmartRefitNewTurnCleanupPatch
     [HarmonyPostfix]
     private static void Postfix(CampaignController __instance)
         => CampaignSmartRefitPatch.CleanupAiRefitDesigns(__instance, "new turn");
+}
+
+[HarmonyPatch]
+internal static class CampaignSmartRefitSummaryNextTurnCompletionPatch
+{
+    private static MethodBase? TargetMethod()
+        => CampaignSharedDesignDiagnosticsPatch.NextTurnMoveNextTarget();
+
+    [HarmonyPrepare]
+    private static bool Prepare()
+    {
+        bool available = TargetMethod() != null;
+        if (!available)
+            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP smart refits ai: NextTurn MoveNext target not found; summary flush will be skipped.");
+
+        return available;
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix(bool __result)
+    {
+        if (!__result)
+            CampaignSmartRefitPatch.FlushPendingAiRefitTurnSummariesAfterNextTurn();
+    }
 }
 
 [HarmonyPatch]

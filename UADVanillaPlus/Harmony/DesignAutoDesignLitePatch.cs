@@ -241,7 +241,7 @@ internal static class DesignAutoDesignLitePatch
         }
     }
 
-    internal static bool TryRunPartsOnlyForAi(Ship ship, out string summary)
+    internal static bool TryRunPartsOnlyForAi(Ship ship, out string summary, bool traceDiagnostics = false)
     {
         summary = "not-run";
         if (ship == null)
@@ -262,13 +262,15 @@ internal static class DesignAutoDesignLitePatch
         string routineKind = "unknown";
         TrimSummary trimSummary = TrimSummary.NotRun;
 
-        LogDiagnosticSnapshot(ship, "ai-parts-only", "before-removeAllParts");
+        if (traceDiagnostics)
+            LogDiagnosticSnapshot(ship, "ai-parts-only", "before-removeAllParts");
         try { ship.RemoveAllParts(true); }
         catch (Exception ex)
         {
             return FailAiPartsOnly(ship, "removeAllParts", ex, beforeParts, routineKind, steps, started, out summary);
         }
-        LogDiagnosticSnapshot(ship, "ai-parts-only", "after-removeAllParts");
+        if (traceDiagnostics)
+            LogDiagnosticSnapshot(ship, "ai-parts-only", "after-removeAllParts");
 
         object? routineObject;
         try
@@ -348,13 +350,15 @@ internal static class DesignAutoDesignLitePatch
             return false;
         }
 
-        LogDiagnosticSnapshot(ship, "ai-parts-only", "after-addRandomPartsNew");
+        if (traceDiagnostics)
+            LogDiagnosticSnapshot(ship, "ai-parts-only", "after-addRandomPartsNew");
         try { trimSummary = TryTrimAutoLiteOverweight(ship); }
         catch (Exception ex)
         {
             return FailAiPartsOnly(ship, "trim", ex, beforeParts, routineKind, steps, started, out summary);
         }
-        LogDiagnosticSnapshot(ship, "ai-parts-only", "after-trim");
+        if (traceDiagnostics)
+            LogDiagnosticSnapshot(ship, "ai-parts-only", "after-trim");
 
         try { ship.CalcWeightAndCost(true, true); }
         catch (Exception ex)
@@ -364,7 +368,8 @@ internal static class DesignAutoDesignLitePatch
 
         int afterParts = Safe(() => ship.parts?.Count ?? 0, 0);
         summary = $"started={started} routine={routineKind} steps={steps} parts={beforeParts}->{afterParts} trim={LogToken(trimSummary.LogText())}";
-        LogDiagnosticSnapshot(ship, "ai-parts-only", "after-recalculate");
+        if (traceDiagnostics)
+            LogDiagnosticSnapshot(ship, "ai-parts-only", "after-recalculate");
         return afterParts > 0;
     }
 

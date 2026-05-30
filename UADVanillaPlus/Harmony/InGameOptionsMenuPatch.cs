@@ -51,7 +51,6 @@ internal static class InGameOptionsMenuPatch
     private const string MineWarfareOptionName = "UADVP_Option_MineWarfare";
     private const string SubmarineWarfareOptionName = "UADVP_Option_SubmarineWarfare";
     private const string ExperimentalNationShipPaintsOptionName = "UADVP_Option_ExperimentalNationShipPaints";
-    private const string BattleRuntimeDiagnosticsOptionName = "UADVP_Option_BattleRuntimeDiagnostics";
     private const string NationShipPaintsSectionName = "UADVP_Option_NationShipPaints";
 
     private static readonly Color Background = new(0f, 0f, 0f, 0.94f);
@@ -509,14 +508,6 @@ internal static class InGameOptionsMenuPatch
                     true,
                     ("Off", !ModSettings.ExperimentalNationShipPaintsEnabled, () => SetExperimentalNationShipPaintsMode(false)),
                     ("On", ModSettings.ExperimentalNationShipPaintsEnabled, () => SetExperimentalNationShipPaintsMode(true)));
-                AddSegmentedOption(
-                    pane.transform,
-                    BattleRuntimeDiagnosticsOptionName,
-                    "Battle Runtime Diagnostics",
-                    "On logs temporary battle-exit summaries for aim uptime, target churn, maneuvering, and weapon output. This is enabled for current balance investigation builds and should be disabled before release.",
-                    true,
-                    ("On", ModSettings.BattleRuntimeDiagnosticsEnabled, () => SetBattleRuntimeDiagnosticsMode(true)),
-                    ("Off", !ModSettings.BattleRuntimeDiagnosticsEnabled, () => SetBattleRuntimeDiagnosticsMode(false)));
                 break;
             case Section.NationShipPaints:
                 BuildNationShipPaintsPane(pane.transform);
@@ -922,15 +913,6 @@ internal static class InGameOptionsMenuPatch
         RefreshLauncherButton();
     }
 
-    private static void SetBattleRuntimeDiagnosticsMode(bool enabled)
-    {
-        if (ModSettings.BattleRuntimeDiagnosticsEnabled != enabled)
-            ModSettings.BattleRuntimeDiagnosticsEnabled = enabled;
-
-        RefreshMenu();
-        RefreshLauncherButton();
-    }
-
     private static void SetNationShipPaintString(DesignHullColorProofPatch.NationPaintUiInfo nation, string value)
     {
         if (ModSettings.SetNationShipPaintString(nation.Key, value ?? string.Empty))
@@ -1144,7 +1126,7 @@ internal static class InGameOptionsMenuPatch
             () => launcherButton != null && launcherButton.interactable);
 
     private static string LauncherTooltipText()
-        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nRealistic Shell Damage: {RealisticShellDamageModeText(ModSettings.RealisticShellDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAdvanced AI Builder: {AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled)}\nSmart AI Designs: {SmartAiDesignsModeText(ModSettings.SmartAiDesignsEnabled)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSmart Refits: {SmartRefitsModeText(ModSettings.SmartRefitsEnabled)}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nForeign Port Capacity: {ForeignPortCapacityModeText(ModSettings.ForeignPortCapacity)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nHull Speed Adjustment: {HullSpeedAdjustmentModeText(ModSettings.HullSpeedAdjustmentEnabled)}\nHull Weight Adjustment: {HullWeightAdjustmentModeText(ModSettings.HullWeightAdjustmentEnabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}\nBattle Runtime Diagnostics: {BattleRuntimeDiagnosticsModeText(ModSettings.BattleRuntimeDiagnosticsEnabled)}";
+        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nRealistic Shell Damage: {RealisticShellDamageModeText(ModSettings.RealisticShellDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAdvanced AI Builder: {AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled)}\nSmart AI Designs: {SmartAiDesignsModeText(ModSettings.SmartAiDesignsEnabled)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSmart Refits: {SmartRefitsModeText(ModSettings.SmartRefitsEnabled)}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nForeign Port Capacity: {ForeignPortCapacityModeText(ModSettings.ForeignPortCapacity)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nHull Speed Adjustment: {HullSpeedAdjustmentModeText(ModSettings.HullSpeedAdjustmentEnabled)}\nHull Weight Adjustment: {HullWeightAdjustmentModeText(ModSettings.HullWeightAdjustmentEnabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}";
 
     private static void AddTooltip(GameObject target, string text, Func<bool>? canShow = null)
         => AddTooltip(target, () => text, canShow);
@@ -1372,9 +1354,6 @@ internal static class InGameOptionsMenuPatch
 
     private static string ExperimentalNationShipPaintsModeText(bool enabled)
         => ModSettings.ExperimentalNationShipPaintsModeText(enabled);
-
-    private static string BattleRuntimeDiagnosticsModeText(bool enabled)
-        => ModSettings.BattleRuntimeDiagnosticsModeText(enabled);
 
     private static void SetMenuButtonText(GameObject buttonObject, string text)
     {

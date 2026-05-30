@@ -2,7 +2,85 @@
 
 ## Status
 
-Planning reference only. No implementation has been started from this note.
+Implemented and proven in campaign samples. The original plan remains below as
+the architecture reference, but the live implementation now uses a strict
+VP-owned Smart AI pipeline with up to three same-candidate inner attempts,
+Smart Parts-only placement, part-dependent post-placement defaults, armor fill,
+strict validation, and compact turn/nation summaries.
+
+Recent validation evidence before the logging cleanup:
+
+- Pre-restart long sample: 31 Smart AI designs, 31 accepted, 0 final rejects, 1
+  useful internal retry. Italian TB `Aldebaran` missed required torpedoes on
+  attempt 1 and accepted on attempt 2.
+- Post-restart sample: 30 Smart AI designs, 30 accepted, 0 retries, 0 rejects,
+  0 accepted overweight designs.
+- Later fresh truncated sample: 7 Smart AI designs, 7 accepted, 0 retries, 0
+  rejects, 0 accepted overweight designs.
+- Old bad signatures stayed gone: no vanilla tail states `11/12/13/14`, no
+  `callback=true:true`, no accepted overweight designs, and no final
+  smart-design discarded/rejected summaries.
+- Known benign behavior: TBs have no armor profile room, so armor summaries
+  with `spent=0`, `profileB=0`, or `no-profile-room` can be expected for them.
+
+## Diagnostics Cleanup / Re-enable Recipe
+
+Normal builds intentionally keep Smart AI design logs compact. To re-enable the
+heavy temporary diagnostics for a future investigation:
+
+- `UADVanillaPlus/Services/SmartAiDesignService.cs`
+  - Change `VerboseDiagnostics => true`.
+  - `Finish(...)` is where compact retry/reject/detail logging is emitted.
+  - `RunVanillaRandomGeneratorForSmartAi(...)` gates the
+    `after-defaultsPost-before-armor` snapshot and passes
+    `traceWeight: VerboseDiagnostics` into
+    `DesignNewHullDefaultsPatch.ApplySmartAiPartDependentDefaults(...)`.
+  - `RunSmartAiPartsAtGeneratorState(...)` passes `VerboseDiagnostics` into
+    `DesignAutoDesignLitePatch.TryRunPartsOnlyForAi(...)`.
+  - `RecordUnmatched(...)` and `RecordFallbackClaim(...)` are the generator
+    state-machine matching diagnostics.
+- `UADVanillaPlus/Harmony/DesignNewHullDefaultsPatch.cs`
+  - `ApplySmartAiPartDependentDefaults(...)` is the post-parts defaults seam.
+    With tracing enabled it logs component-by-component weight breadcrumbs for
+    armament, equipment, and torpedo defaults only.
+- `UADVanillaPlus/Harmony/DesignAutoDesignLitePatch.cs`
+  - `LogDiagnosticSnapshot(...)` owns the heavy component/part/gun-row
+    snapshots used by both UI Smart Place Parts and AI parts-only placement.
+- `UADVanillaPlus/Harmony/CampaignAiDesignGenerationDiagnosticsPatch.cs`
+  - Change `VerboseDiagnostics => true` to restore the broad `[AI DesignGen]`
+    start/result/gate diagnostics. Normal mode logs only created designs and
+    unusual random failures/erases.
+- `UADVanillaPlus/Harmony/CampaignSmartAiDesignPatch.cs`
+  - `CampaignSmartAiDesignSummaryNextTurnCompletionPatch` flushes
+    `SmartAiDesignService` summaries when the `NextTurn` state machine
+    completes.
+
+## Normal Logging
+
+Normal builds emit one compact Smart AI design line per campaign turn:
+
+- `UADVP smart AI designs summary turn=... entries=N accepted=N rejected=N retries=N totalMs=N designs=...`
+- Each design entry includes nation, type, design name, hull display/id,
+  accepted or rejected attempt count, weight/capacity, elapsed milliseconds, and
+  retry first-failure text when applicable.
+- If Smart AI Designs is enabled and no Smart AI design attempt happened that
+  turn, the turn-end hook emits `UADVP smart AI designs summary turn=... entries=0`.
+- Heavy per-attempt payloads, generator state-machine details, component weight
+  traces, and `DesignAutoDesignLitePatch.LogDiagnosticSnapshot(... "smart-ai" ...)`
+  output are gated by `VerboseDiagnostics => false`.
+- Known benign behavior remains: TBs have no armor profile room, so armor
+  summaries with `spent=0`, `profileB=0`, or `no-profile-room` can be expected
+  when verbose diagnostics are re-enabled.
+
+Useful bad-pattern log searches:
+
+- `result=rejected`
+- `summary.*rejected=[1-9]`
+- `attemptsUsed=[2-9]`
+- `acceptedAttempt=[2-9]`
+- `stoppedAfterSmartParts=false`
+- `states=.*11/12/13/14`
+- `callback=true:true`
 
 This is the proposed direction for a future VP feature that replaces the most expensive and least controlled part of vanilla AI random ship design while keeping vanilla campaign selection, shared-design checks, and build validation as the authority.
 
@@ -140,7 +218,7 @@ At the end of the turn, summarize all Smart AI Design attempts:
 - rejection reasons grouped by stage,
 - examples by nation/type/design.
 
-The existing `[AI DesignGen]` summary around `BuildNewShips(...)` is the likely best place to flush this, because it already runs after `GenerateRandomDesigns(...)` has finished for that nation.
+Current implementation flushes Smart AI summaries from the `NextTurn` state-machine completion hook, matching the AI build and shared-design gap summary cadence.
 
 ## Risks And Guardrails
 

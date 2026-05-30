@@ -36,28 +36,6 @@ internal static class CampaignSmartAiDesignTryTakePatch
 }
 
 [HarmonyPatch]
-internal static class CampaignSmartAiDesignBuildNewShipsPatch
-{
-    private static MethodBase? TargetMethod()
-        => AccessTools.Method(typeof(CampaignController), "BuildNewShips", new[] { typeof(Player), typeof(float) });
-
-    [HarmonyPrepare]
-    private static bool Prepare()
-    {
-        bool available = TargetMethod() != null;
-        if (!available)
-            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP smart AI designs: BuildNewShips target not found; smart design summaries will flush later.");
-
-        return available;
-    }
-
-    [HarmonyPrefix]
-    [HarmonyPriority(Priority.Low)]
-    private static void Prefix(Player player)
-        => SmartAiDesignService.FlushSummary(player);
-}
-
-[HarmonyPatch]
 internal static class CampaignSmartAiDesignRandomShipMoveNextPatch
 {
     private static MethodBase? TargetMethod()
@@ -88,4 +66,28 @@ internal static class CampaignSmartAiDesignRandomShipMoveNextPatch
     [HarmonyFinalizer]
     private static void Finalizer(object __instance, Exception? __exception)
         => SmartAiDesignService.SmartAiRandomShipMoveNextFinalizer(__instance, __exception);
+}
+
+[HarmonyPatch]
+internal static class CampaignSmartAiDesignSummaryNextTurnCompletionPatch
+{
+    private static MethodBase? TargetMethod()
+        => CampaignSharedDesignDiagnosticsPatch.NextTurnMoveNextTarget();
+
+    [HarmonyPrepare]
+    private static bool Prepare()
+    {
+        bool available = TargetMethod() != null;
+        if (!available)
+            Melon<UADVanillaPlusMod>.Logger.Warning("UADVP smart AI designs: NextTurn MoveNext target not found; turn summary flush will be skipped.");
+
+        return available;
+    }
+
+    [HarmonyPostfix]
+    private static void Postfix(bool __result)
+    {
+        if (!__result)
+            SmartAiDesignService.FlushPendingTurnSummariesAfterNextTurn();
+    }
 }
