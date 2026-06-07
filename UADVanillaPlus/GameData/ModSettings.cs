@@ -26,6 +26,7 @@ internal static class ModSettings
     private const string SuperstructureRefitsEnabledKey = "uadvp_superstructure_refits_enabled";
     private const string ShipyardCapacityBalancedKey = "uadvp_shipyard_capacity_balanced";
     private const string ForeignPortCapacityModeKey = "uadvp_foreign_port_capacity_mode";
+    private const string ArmyLogisticsModeKey = "uadvp_army_logistics_mode";
     private const string MineWarfareDisabledKey = "uadvp_mine_warfare_disabled";
     private const string SubmarineWarfareDisabledKey = "uadvp_submarine_warfare_disabled";
     private const string CampaignMapWraparoundEnabledKey = "uadvp_campaign_map_wraparound_enabled";
@@ -55,6 +56,7 @@ internal static class ModSettings
     private static bool? superstructureRefitsEnabled;
     private static bool? shipyardCapacityBalanced;
     private static ForeignPortCapacityMode? foreignPortCapacity;
+    private static ArmyLogisticsMode? armyLogistics;
     private static bool? mineWarfareDisabled;
     private static bool? submarineWarfareDisabled;
     private static bool? campaignMapWraparoundEnabled;
@@ -123,6 +125,12 @@ internal static class ModSettings
     {
         Vanilla = 0,
         Half = 50,
+    }
+
+    internal enum ArmyLogisticsMode
+    {
+        Vanilla = 0,
+        Balanced = 1,
     }
 
     internal static bool PortStrikeBalanced
@@ -390,6 +398,19 @@ internal static class ModSettings
         }
     }
 
+    internal static ArmyLogisticsMode ArmyLogistics
+    {
+        get => armyLogistics ??= LoadArmyLogisticsMode();
+        set
+        {
+            armyLogistics = value;
+            PlayerPrefs.SetInt(ArmyLogisticsModeKey, (int)value);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Army Logistics mode {ArmyLogisticsModeText(value)}.");
+            LogCurrentSettings("after Army Logistics change");
+        }
+    }
+
     internal static bool MineWarfareDisabled
     {
         get => mineWarfareDisabled ??= PlayerPrefs.GetInt(MineWarfareDisabledKey, 0) != 0;
@@ -586,6 +607,9 @@ internal static class ModSettings
     internal static string ForeignPortCapacityModeText(ForeignPortCapacityMode mode)
         => mode == ForeignPortCapacityMode.Half ? "50%" : "Vanilla";
 
+    internal static string ArmyLogisticsModeText(ArmyLogisticsMode mode)
+        => mode == ArmyLogisticsMode.Balanced ? "Balanced" : "Vanilla";
+
     internal static void LogCurrentSettings(string context)
     {
         Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP settings ({context}): {CurrentSettingsText()}.");
@@ -605,6 +629,7 @@ internal static class ModSettings
            $"Smart Refits={SmartRefitsModeText(SmartRefitsEnabled)}; " +
            $"Suspend Dock Overcapacity={ShipyardCapacityModeText(ShipyardCapacityBalanced)}; " +
            $"Foreign Port Capacity={ForeignPortCapacityModeText(ForeignPortCapacity)}; " +
+           $"Army Logistics={ArmyLogisticsModeText(ArmyLogistics)}; " +
            $"Canal Openings={CanalOpeningModeText(EarlyCanalOpeningsEnabled)}; " +
            $"Technology Spread={TechnologySpreadModeText(TechnologySpread)}; " +
            $"Campaign End Date={CampaignEndDateModeText(CampaignEndDateEnabled)}; " +
@@ -728,6 +753,14 @@ internal static class ModSettings
         return Enum.IsDefined(typeof(ForeignPortCapacityMode), stored)
             ? (ForeignPortCapacityMode)stored
             : ForeignPortCapacityMode.Half;
+    }
+
+    private static ArmyLogisticsMode LoadArmyLogisticsMode()
+    {
+        int stored = PlayerPrefs.GetInt(ArmyLogisticsModeKey, (int)ArmyLogisticsMode.Balanced);
+        return Enum.IsDefined(typeof(ArmyLogisticsMode), stored)
+            ? (ArmyLogisticsMode)stored
+            : ArmyLogisticsMode.Balanced;
     }
 
     private static string NationShipPaintPreferenceKey(string nationKey)
