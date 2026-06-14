@@ -14,6 +14,9 @@ internal static class ModSettings
     private const string SmartAiDesignsEnabledKey = "uadvp_smart_ai_designs_enabled";
     private const string SharedDesignsOnlyModeKey = "uadvp_shared_designs_only_mode";
     private const string SmartRefitsEnabledKey = "uadvp_smart_refits_enabled";
+    private const string AiTaskForceStagingEnabledKey = "uadvp_ai_task_force_staging_enabled";
+    private const string CampaignNavalMobilityModeKey = "uadvp_campaign_naval_mobility_mode";
+    private const string TaskForceSustainmentFullKey = "uadvp_task_force_sustainment_full";
     private const string BattleWeatherAlwaysSunnyKey = "uadvp_battle_weather_always_sunny";
     private const string BattleSpottingRangeModeKey = "uadvp_battle_spotting_range_mode";
     private const string BattleDamageModeKey = "uadvp_battle_damage_mode";
@@ -44,6 +47,9 @@ internal static class ModSettings
     private static bool? smartAiDesignsEnabled;
     private static bool? sharedDesignsOnlyMode;
     private static bool? smartRefitsEnabled;
+    private static bool? aiTaskForceStagingEnabled;
+    private static CampaignNavalMobilityMode? campaignNavalMobilityMode;
+    private static bool? taskForceSustainmentFullEnabled;
     private static bool? battleWeatherAlwaysSunny;
     private static BattleSpottingRangeMode? battleSpottingRangeMode;
     private static BattleDamageMode? battleDamageMode;
@@ -125,6 +131,14 @@ internal static class ModSettings
     {
         Vanilla = 0,
         Half = 50,
+    }
+
+    internal enum CampaignNavalMobilityMode
+    {
+        Vanilla = 0,
+        Improved = 50,
+        Fast = 65,
+        Extended = 80,
     }
 
     internal enum ArmyLogisticsMode
@@ -226,6 +240,46 @@ internal static class ModSettings
             PlayerPrefs.Save();
             Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Smart Refits mode {SmartRefitsModeText(value)}.");
             LogCurrentSettings("after Smart Refits change");
+        }
+    }
+
+    internal static bool AiTaskForceStagingEnabled
+    {
+        get => aiTaskForceStagingEnabled ??= PlayerPrefs.GetInt(AiTaskForceStagingEnabledKey, 1) != 0;
+        set
+        {
+            aiTaskForceStagingEnabled = value;
+            PlayerPrefs.SetInt(AiTaskForceStagingEnabledKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: AI Task Force Staging mode {AiTaskForceStagingModeText(value)}.");
+            LogCurrentSettings("after AI Task Force Staging change");
+        }
+    }
+
+    internal static CampaignNavalMobilityMode CampaignNavalMobility
+    {
+        get => campaignNavalMobilityMode ??= LoadCampaignNavalMobilityMode();
+        set
+        {
+            campaignNavalMobilityMode = value;
+            PlayerPrefs.SetInt(CampaignNavalMobilityModeKey, (int)value);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Campaign Naval Mobility mode {CampaignNavalMobilityModeText(value)}.");
+            LogCurrentSettings("after Campaign Naval Mobility change");
+            CampaignNavalMobilityBalance.ApplyCurrentSetting("option change");
+        }
+    }
+
+    internal static bool TaskForceSustainmentFullEnabled
+    {
+        get => taskForceSustainmentFullEnabled ??= PlayerPrefs.GetInt(TaskForceSustainmentFullKey, 1) != 0;
+        set
+        {
+            taskForceSustainmentFullEnabled = value;
+            PlayerPrefs.SetInt(TaskForceSustainmentFullKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Task Force Sustainment mode {TaskForceSustainmentModeText(value)}.");
+            LogCurrentSettings("after Task Force Sustainment change");
         }
     }
 
@@ -598,6 +652,30 @@ internal static class ModSettings
     internal static string SmartRefitsModeText(bool enabled)
         => enabled ? "Enhanced" : "Vanilla";
 
+    internal static string AiTaskForceStagingModeText(bool enabled)
+        => enabled ? "Staging" : "Vanilla";
+
+    internal static string CampaignNavalMobilityModeText(CampaignNavalMobilityMode mode)
+        => mode switch
+        {
+            CampaignNavalMobilityMode.Extended => "Extended",
+            CampaignNavalMobilityMode.Fast => "Fast",
+            CampaignNavalMobilityMode.Improved => "Improved",
+            _ => "Vanilla",
+        };
+
+    internal static string TaskForceSustainmentModeText(bool enabled)
+        => enabled ? "Full" : "Vanilla";
+
+    internal static float CampaignNavalMobilitySpeedMod(CampaignNavalMobilityMode mode)
+        => mode switch
+        {
+            CampaignNavalMobilityMode.Extended => 0.8f,
+            CampaignNavalMobilityMode.Fast => 0.65f,
+            CampaignNavalMobilityMode.Improved => 0.5f,
+            _ => 0.2975f,
+        };
+
     internal static string HullSpeedAdjustmentModeText(bool enabled)
         => enabled ? "Adjusted" : "Vanilla";
 
@@ -627,6 +705,9 @@ internal static class ModSettings
            $"Smart AI Designs={SmartAiDesignsModeText(SmartAiDesignsEnabled)}; " +
            $"Shared Designs={CampaignSharedDesignUsageSettings.CurrentModeText()}; " +
            $"Smart Refits={SmartRefitsModeText(SmartRefitsEnabled)}; " +
+           $"AI Task Force Staging={AiTaskForceStagingModeText(AiTaskForceStagingEnabled)}; " +
+           $"Campaign Naval Mobility={CampaignNavalMobilityModeText(CampaignNavalMobility)}; " +
+           $"Task Force Sustainment={TaskForceSustainmentModeText(TaskForceSustainmentFullEnabled)}; " +
            $"Suspend Dock Overcapacity={ShipyardCapacityModeText(ShipyardCapacityBalanced)}; " +
            $"Foreign Port Capacity={ForeignPortCapacityModeText(ForeignPortCapacity)}; " +
            $"Army Logistics={ArmyLogisticsModeText(ArmyLogistics)}; " +
@@ -753,6 +834,14 @@ internal static class ModSettings
         return Enum.IsDefined(typeof(ForeignPortCapacityMode), stored)
             ? (ForeignPortCapacityMode)stored
             : ForeignPortCapacityMode.Half;
+    }
+
+    private static CampaignNavalMobilityMode LoadCampaignNavalMobilityMode()
+    {
+        int stored = PlayerPrefs.GetInt(CampaignNavalMobilityModeKey, (int)CampaignNavalMobilityMode.Extended);
+        return Enum.IsDefined(typeof(CampaignNavalMobilityMode), stored)
+            ? (CampaignNavalMobilityMode)stored
+            : CampaignNavalMobilityMode.Extended;
     }
 
     private static ArmyLogisticsMode LoadArmyLogisticsMode()

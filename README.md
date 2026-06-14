@@ -2,7 +2,7 @@
 
 UAD Vanilla Plus (`UAD:VP`) is a lightweight mod for Ultimate Admiral: Dreadnoughts that keeps the base game feel while adding small quality-of-life improvements.
 
-Current version: `0.6.19`
+Current version: `0.6.32`
 
 ## Philosophy
 
@@ -33,6 +33,7 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 **QoL:**
 
 - **Campaign maintenance indicators**: show dock expansion status and transport capacity directly in the campaign country info panel.
+- **Politics capacity details**: show each nation's transport capacity, dockyard size, and shipbuilding capacity in the Politics screen row.
 - **Task force tonnage indicators**: fill campaign-map task-force icons by battle tonnage, with 100,000 tons and above shown as a full stack.
 - **Task force return shortcut**: add a `Return to <origin port>` button to task-force popups for one-click orders back to port.
 - **Campaign battle auto-resolve odds**: show the player's vanilla auto-resolve win chance in the battle popup.
@@ -49,10 +50,14 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 **Balance:**
 
 - **Port Strike balance**: scales transport losses from undefended port strikes by attacker tonnage instead of allowing small raiders to destroy large transport groups.
+- **Transport loss active-force filter**: sea-zone transport losses ignore task forces that are only moving through a region instead of counting them as settled local raiders.
 - **AI Fleet Mix**: optional `Vanilla`, `Balanced`, and `Heavy` modes adjust AI surface-ship construction weights and, outside vanilla mode, favor the most under-target valid surface types. This defaults to `Heavy`.
 - **Advanced AI Builder**: default-on `Enhanced` mode lets VP help AI design books with shared-design blueprint adaptation, missing-type recovery, and stale-design refreshes; `Vanilla` keeps the game's original design-generation cadence and exact shared-design checks.
 - **Smart AI Designs**: experimental, default-off mode replaces vanilla's random AI new-design fallback with one deterministic VP attempt after shared and predefined designs fail.
 - **Smart Refits**: default-on `Enhanced` mode replaces vanilla AI random refits with VP's conservative refit pass and adds a player-only `Smart Refit` constructor button; `Vanilla` restores the game's original AI refit path and hides the VP button.
+- **Campaign naval mobility**: Adds an in-game campaign movement preset that defaults to faster task-force movement and a wider matching supply envelope, with a vanilla preset available from the UAD:VP options menu.
+- **Task Force Sustainment**: default-on `Full` mode keeps campaign task forces supplied and tops off campaign fuel and ammunition at movement, maintenance, and battle boundaries; `Vanilla` restores the game's original campaign supply, fuel, and ammunition attrition.
+- **AI task-force staging**: default-on `Staging` mode helps AI task forces headed to the same theater pause and rendezvous before battle generation instead of arriving as isolated piecemeal fights; `Vanilla` keeps the game's original dispatch.
 - **Suspend Dock Overcapacity**: automatically delays lower-priority repairs, builds, and refits when monthly dock work exceeds shipyard capacity; manual mode keeps vanilla overcapacity handling.
 - **Foreign port shipbuilding capacity**: controlled non-home ports can contribute 50% of their normal port-capacity share to national shipbuilding capacity, with a `Vanilla` toggle in the UAD:VP options menu.
 - **Army Logistics balance**: default-on `Balanced` mode bases army logistics on transport capacity plus navy-rating and fleet-tonnage coverage of national ports and provinces; `Vanilla` restores the game's budget/population formula and random non-major logistics rolls.
@@ -90,6 +95,7 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 
 - **Battle speed quality-of-life**: keep the player's selected battle speed available when the game tries to slow simulation speed near enemies.
 - **Space pause toggle**: use Space in battle to pause and resume to the previous battle speed.
+- **Weapon target range readout**: show the current target range under each battle weapon-row aim/status line.
 - **Battle division AI control**: add an `AI` division-order toggle with `6` hotkey support in battle so selected friendly divisions can be handed back to AI control, with manual right-click orders returning them to player control.
 
 **Balance:**
