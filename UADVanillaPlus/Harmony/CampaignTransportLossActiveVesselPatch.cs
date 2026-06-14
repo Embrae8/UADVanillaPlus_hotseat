@@ -2,6 +2,7 @@ using System.Reflection;
 using HarmonyLib;
 using Il2Cpp;
 using MelonLoader;
+using UADVanillaPlus.GameData;
 
 namespace UADVanillaPlus.Harmony;
 
@@ -33,6 +34,9 @@ internal static class CampaignTransportLossAreaVesselScope
 
     internal static void OnTimingToken(CampaignController? campaign, string? msg, string source)
     {
+        if (!ModSettings.SeaTransportLossesActiveForcesEnabled)
+            return;
+
         LogTimingTokenOnce(msg, source);
 
         if (campaign == null || string.IsNullOrWhiteSpace(msg))
@@ -45,13 +49,27 @@ internal static class CampaignTransportLossAreaVesselScope
     }
 
     internal static void BeginForTransportLossState(CampaignController? campaign, string source)
-        => Begin(campaign, source);
+    {
+        if (ModSettings.SeaTransportLossesActiveForcesEnabled)
+            Begin(campaign, source);
+    }
 
     internal static void EndForTransportLossState(string source)
-        => End(source);
+    {
+        if (ModSettings.SeaTransportLossesActiveForcesEnabled)
+            End(source);
+        else
+            Reset();
+    }
 
     internal static void Begin(CampaignController? campaign, string source = "TransportLoses window")
     {
+        if (!ModSettings.SeaTransportLossesActiveForcesEnabled)
+        {
+            Reset();
+            return;
+        }
+
         if (isActive && !loggedDuplicateBegin)
         {
             loggedDuplicateBegin = true;
@@ -118,6 +136,9 @@ internal static class CampaignTransportLossAreaVesselScope
         Player? player,
         ref Il2CppSystem.Collections.Generic.List<VesselEntity>? result)
     {
+        if (!ModSettings.SeaTransportLossesActiveForcesEnabled)
+            return false;
+
         if (!isActive || campaign == null || area == null || player == null)
             return false;
 

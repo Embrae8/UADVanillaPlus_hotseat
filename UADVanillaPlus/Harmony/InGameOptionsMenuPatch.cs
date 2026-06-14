@@ -18,6 +18,7 @@ internal static class InGameOptionsMenuPatch
     {
         Battle,
         Campaign,
+        CampaignII,
         ShipDesign,
         Experimental,
         NationShipPaints,
@@ -37,6 +38,7 @@ internal static class InGameOptionsMenuPatch
     private const string SmartAiDesignsOptionName = "UADVP_Option_SmartAiDesigns";
     private const string SharedDesignsUsageOptionName = "UADVP_Option_SharedDesignsUsage";
     private const string SmartRefitsOptionName = "UADVP_Option_SmartRefits";
+    private const string SeaTransportLossesOptionName = "UADVP_Option_SeaTransportLosses";
     private const string AiTaskForceStagingOptionName = "UADVP_Option_AiTaskForceStaging";
     private const string CampaignNavalMobilityOptionName = "UADVP_Option_CampaignNavalMobility";
     private const string TaskForceSustainmentOptionName = "UADVP_Option_TaskForceSustainment";
@@ -269,6 +271,7 @@ internal static class InGameOptionsMenuPatch
 
         AddSectionButton(sections.transform, Section.Battle, "Battle");
         AddSectionButton(sections.transform, Section.Campaign, "Campaign");
+        AddSectionButton(sections.transform, Section.CampaignII, "Campaign II");
         AddSectionButton(sections.transform, Section.ShipDesign, "Ship Design");
         AddSectionButton(sections.transform, Section.Experimental, "Experimental");
         if (ModSettings.ExperimentalNationShipPaintsEnabled)
@@ -352,6 +355,14 @@ internal static class InGameOptionsMenuPatch
                     ("Vanilla", !ModSettings.PortStrikeBalanced, () => SetPortStrikeMode(false)));
                 AddSegmentedOption(
                     pane.transform,
+                    SeaTransportLossesOptionName,
+                    "Sea Transport Losses",
+                    "Active Forces ignores task forces merely transiting through a sea region when calculating abstract sea-zone transport losses. Vanilla counts the game's original area-vessel list.",
+                    true,
+                    ("Active Forces", ModSettings.SeaTransportLossesActiveForcesEnabled, () => SetSeaTransportLossesMode(true)),
+                    ("Vanilla", !ModSettings.SeaTransportLossesActiveForcesEnabled, () => SetSeaTransportLossesMode(false)));
+                AddSegmentedOption(
+                    pane.transform,
                     AiFleetCompositionOptionName,
                     "AI Fleet Mix",
                     "Adjusts AI surface-ship construction weights. Vanilla keeps the game's original light-ship-heavy ratios. Balanced gives BB, BC, CA, CL, DD, and TB equal weight. Heavy favors capital and cruiser fleets while reducing destroyer and torpedo-boat pressure.",
@@ -393,6 +404,8 @@ internal static class InGameOptionsMenuPatch
                     true,
                     ("Enhanced", ModSettings.SmartRefitsEnabled, () => SetSmartRefitsMode(true)),
                     ("Vanilla", !ModSettings.SmartRefitsEnabled, () => SetSmartRefitsMode(false)));
+                break;
+            case Section.CampaignII:
                 AddSegmentedOption(
                     pane.transform,
                     CampaignNavalMobilityOptionName,
@@ -847,6 +860,15 @@ internal static class InGameOptionsMenuPatch
         RefreshLauncherButton();
     }
 
+    private static void SetSeaTransportLossesMode(bool enabled)
+    {
+        if (ModSettings.SeaTransportLossesActiveForcesEnabled != enabled)
+            ModSettings.SeaTransportLossesActiveForcesEnabled = enabled;
+
+        RefreshMenu();
+        RefreshLauncherButton();
+    }
+
     private static void SetCampaignNavalMobilityMode(ModSettings.CampaignNavalMobilityMode mode)
     {
         if (ModSettings.CampaignNavalMobility != mode)
@@ -1197,7 +1219,7 @@ internal static class InGameOptionsMenuPatch
     }
 
     private static bool AnyBalanceOptionEnabled()
-        => ModSettings.BattleWeatherAlwaysSunny || ModSettings.BattleSpottingRange != ModSettings.BattleSpottingRangeMode.Vanilla || ModSettings.BattleDamage != ModSettings.BattleDamageMode.Vanilla || ModSettings.RealisticShellDamageEnabled || ModSettings.DesignAccuracyPenaltiesBalanced || ModSettings.PortStrikeBalanced || ModSettings.AiFleetComposition != ModSettings.AiFleetCompositionMode.Vanilla || ModSettings.AdvancedAiBuilderEnabled || ModSettings.SmartAiDesignsEnabled || ModSettings.SmartRefitsEnabled || ModSettings.CampaignNavalMobility != ModSettings.CampaignNavalMobilityMode.Vanilla || ModSettings.TaskForceSustainmentFullEnabled || ModSettings.AiTaskForceStagingEnabled || ModSettings.HullSpeedAdjustmentEnabled || ModSettings.HullWeightAdjustmentEnabled || ModSettings.MajorShipTorpedoesRestricted || ModSettings.ObsoleteDesignRetentionEnabled || ModSettings.SuperstructureRefitsEnabled || ModSettings.ShipyardCapacityBalanced || ModSettings.ForeignPortCapacity != ModSettings.ForeignPortCapacityMode.Vanilla || ModSettings.ArmyLogistics != ModSettings.ArmyLogisticsMode.Vanilla || ModSettings.EarlyCanalOpeningsEnabled || ModSettings.TechnologySpread != ModSettings.TechnologySpreadMode.Vanilla || !ModSettings.CampaignEndDateEnabled || ModSettings.MineWarfareDisabled || ModSettings.SubmarineWarfareDisabled || ModSettings.CampaignMapWraparoundEnabled || ModSettings.ExperimentalNationShipPaintsEnabled;
+        => ModSettings.BattleWeatherAlwaysSunny || ModSettings.BattleSpottingRange != ModSettings.BattleSpottingRangeMode.Vanilla || ModSettings.BattleDamage != ModSettings.BattleDamageMode.Vanilla || ModSettings.RealisticShellDamageEnabled || ModSettings.DesignAccuracyPenaltiesBalanced || ModSettings.PortStrikeBalanced || ModSettings.SeaTransportLossesActiveForcesEnabled || ModSettings.AiFleetComposition != ModSettings.AiFleetCompositionMode.Vanilla || ModSettings.AdvancedAiBuilderEnabled || ModSettings.SmartAiDesignsEnabled || ModSettings.SmartRefitsEnabled || ModSettings.CampaignNavalMobility != ModSettings.CampaignNavalMobilityMode.Vanilla || ModSettings.TaskForceSustainmentFullEnabled || ModSettings.AiTaskForceStagingEnabled || ModSettings.HullSpeedAdjustmentEnabled || ModSettings.HullWeightAdjustmentEnabled || ModSettings.MajorShipTorpedoesRestricted || ModSettings.ObsoleteDesignRetentionEnabled || ModSettings.SuperstructureRefitsEnabled || ModSettings.ShipyardCapacityBalanced || ModSettings.ForeignPortCapacity != ModSettings.ForeignPortCapacityMode.Vanilla || ModSettings.ArmyLogistics != ModSettings.ArmyLogisticsMode.Vanilla || ModSettings.EarlyCanalOpeningsEnabled || ModSettings.TechnologySpread != ModSettings.TechnologySpreadMode.Vanilla || !ModSettings.CampaignEndDateEnabled || ModSettings.MineWarfareDisabled || ModSettings.SubmarineWarfareDisabled || ModSettings.CampaignMapWraparoundEnabled || ModSettings.ExperimentalNationShipPaintsEnabled;
 
     private static void AddLauncherTooltip(GameObject buttonObject)
         => AddTooltip(
@@ -1206,7 +1228,7 @@ internal static class InGameOptionsMenuPatch
             () => launcherButton != null && launcherButton.interactable);
 
     private static string LauncherTooltipText()
-        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nRealistic Shell Damage: {RealisticShellDamageModeText(ModSettings.RealisticShellDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAdvanced AI Builder: {AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled)}\nSmart AI Designs: {SmartAiDesignsModeText(ModSettings.SmartAiDesignsEnabled)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSmart Refits: {SmartRefitsModeText(ModSettings.SmartRefitsEnabled)}\nCampaign Naval Mobility: {CampaignNavalMobilityModeText(ModSettings.CampaignNavalMobility)}\nTask Force Sustainment: {TaskForceSustainmentModeText(ModSettings.TaskForceSustainmentFullEnabled)}\nAI Task Force Staging: {AiTaskForceStagingModeText(ModSettings.AiTaskForceStagingEnabled)}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nForeign Port Capacity: {ForeignPortCapacityModeText(ModSettings.ForeignPortCapacity)}\nArmy Logistics: {ArmyLogisticsModeText(ModSettings.ArmyLogistics)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nHull Speed Adjustment: {HullSpeedAdjustmentModeText(ModSettings.HullSpeedAdjustmentEnabled)}\nHull Weight Adjustment: {HullWeightAdjustmentModeText(ModSettings.HullWeightAdjustmentEnabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}";
+        => $"UAD:VP Options\nBattle Weather: {BattleWeatherModeText(ModSettings.BattleWeatherAlwaysSunny)}\nBattle Spotting: {BattleSpottingRangeModeText(ModSettings.BattleSpottingRange)}\nBattle Damage: {BattleDamageModeText(ModSettings.BattleDamage)}\nRealistic Shell Damage: {RealisticShellDamageModeText(ModSettings.RealisticShellDamage)}\nCrew & Accuracy Balance: {DesignAccuracyPenaltiesModeText(ModSettings.DesignAccuracyPenaltyMode)}\nPort Strike: {PortStrikeModeText(ModSettings.PortStrikeBalanced)}\nSea Transport Losses: {SeaTransportLossesModeText(ModSettings.SeaTransportLossesActiveForcesEnabled)}\nAI Fleet Mix: {AiFleetCompositionModeText(ModSettings.AiFleetComposition)}\nAdvanced AI Builder: {AdvancedAiBuilderModeText(ModSettings.AdvancedAiBuilderEnabled)}\nSmart AI Designs: {SmartAiDesignsModeText(ModSettings.SmartAiDesignsEnabled)}\nShared Designs: {CampaignSharedDesignUsageSettings.CurrentModeText()}\nSmart Refits: {SmartRefitsModeText(ModSettings.SmartRefitsEnabled)}\nCampaign Naval Mobility: {CampaignNavalMobilityModeText(ModSettings.CampaignNavalMobility)}\nTask Force Sustainment: {TaskForceSustainmentModeText(ModSettings.TaskForceSustainmentFullEnabled)}\nAI Task Force Staging: {AiTaskForceStagingModeText(ModSettings.AiTaskForceStagingEnabled)}\nSuspend Dock Overcapacity: {ShipyardCapacityModeText(ModSettings.ShipyardCapacityBalanced)}\nForeign Port Capacity: {ForeignPortCapacityModeText(ModSettings.ForeignPortCapacity)}\nArmy Logistics: {ArmyLogisticsModeText(ModSettings.ArmyLogistics)}\nCanal Openings: {CanalOpeningModeText(ModSettings.EarlyCanalOpeningsEnabled)}\nTechnology Spread: {TechnologySpreadModeText(ModSettings.TechnologySpread)}\nCampaign End Date: {CampaignEndDateModeText(ModSettings.CampaignEndDateEnabled)}\nMine Warfare: {MineWarfareModeText(ModSettings.MineWarfareDisabled)}\nSubmarine Warfare: {SubmarineWarfareModeText(ModSettings.SubmarineWarfareDisabled)}\nHull Speed Adjustment: {HullSpeedAdjustmentModeText(ModSettings.HullSpeedAdjustmentEnabled)}\nHull Weight Adjustment: {HullWeightAdjustmentModeText(ModSettings.HullWeightAdjustmentEnabled)}\nCA+ Torpedoes: {MajorShipTorpedoesModeText(ModSettings.MajorShipTorpedoesRestricted)}\nObsolete Tech & Hulls: {ObsoleteDesignRetentionModeText(ModSettings.ObsoleteDesignRetentionEnabled)}\nSuperstructure Compatibility: {SuperstructureRefitsModeText(ModSettings.SuperstructureRefitsEnabled)}\nMap Geometry: {CampaignMapWraparoundModeText(ModSettings.CampaignMapWraparoundEnabled)}\nExperimental Nation Ship Paints: {ExperimentalNationShipPaintsModeText(ModSettings.ExperimentalNationShipPaintsEnabled)}";
 
     private static void AddTooltip(GameObject target, string text, Func<bool>? canShow = null)
         => AddTooltip(target, () => text, canShow);
@@ -1357,6 +1379,7 @@ internal static class InGameOptionsMenuPatch
         {
             Section.Battle => "Battle",
             Section.Campaign => "Campaign",
+            Section.CampaignII => "Campaign II",
             Section.ShipDesign => "Ship Design",
             Section.Experimental => "Experimental",
             Section.NationShipPaints => "Nation Ship Paints",
@@ -1380,6 +1403,9 @@ internal static class InGameOptionsMenuPatch
 
     private static string SmartRefitsModeText(bool enabled)
         => ModSettings.SmartRefitsModeText(enabled);
+
+    private static string SeaTransportLossesModeText(bool enabled)
+        => ModSettings.SeaTransportLossesModeText(enabled);
 
     private static string AiTaskForceStagingModeText(bool enabled)
         => ModSettings.AiTaskForceStagingModeText(enabled);

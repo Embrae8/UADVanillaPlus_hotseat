@@ -14,6 +14,7 @@ internal static class ModSettings
     private const string SmartAiDesignsEnabledKey = "uadvp_smart_ai_designs_enabled";
     private const string SharedDesignsOnlyModeKey = "uadvp_shared_designs_only_mode";
     private const string SmartRefitsEnabledKey = "uadvp_smart_refits_enabled";
+    private const string SeaTransportLossesActiveForcesKey = "uadvp_sea_transport_losses_active_forces";
     private const string AiTaskForceStagingEnabledKey = "uadvp_ai_task_force_staging_enabled";
     private const string CampaignNavalMobilityModeKey = "uadvp_campaign_naval_mobility_mode";
     private const string TaskForceSustainmentFullKey = "uadvp_task_force_sustainment_full";
@@ -47,6 +48,7 @@ internal static class ModSettings
     private static bool? smartAiDesignsEnabled;
     private static bool? sharedDesignsOnlyMode;
     private static bool? smartRefitsEnabled;
+    private static bool? seaTransportLossesActiveForcesEnabled;
     private static bool? aiTaskForceStagingEnabled;
     private static CampaignNavalMobilityMode? campaignNavalMobilityMode;
     private static bool? taskForceSustainmentFullEnabled;
@@ -240,6 +242,19 @@ internal static class ModSettings
             PlayerPrefs.Save();
             Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Smart Refits mode {SmartRefitsModeText(value)}.");
             LogCurrentSettings("after Smart Refits change");
+        }
+    }
+
+    internal static bool SeaTransportLossesActiveForcesEnabled
+    {
+        get => seaTransportLossesActiveForcesEnabled ??= PlayerPrefs.GetInt(SeaTransportLossesActiveForcesKey, 1) != 0;
+        set
+        {
+            seaTransportLossesActiveForcesEnabled = value;
+            PlayerPrefs.SetInt(SeaTransportLossesActiveForcesKey, value ? 1 : 0);
+            PlayerPrefs.Save();
+            Melon<UADVanillaPlusMod>.Logger.Msg($"UADVP option: Sea Transport Losses mode {SeaTransportLossesModeText(value)}.");
+            LogCurrentSettings("after Sea Transport Losses change");
         }
     }
 
@@ -652,6 +667,9 @@ internal static class ModSettings
     internal static string SmartRefitsModeText(bool enabled)
         => enabled ? "Enhanced" : "Vanilla";
 
+    internal static string SeaTransportLossesModeText(bool enabled)
+        => enabled ? "Active Forces" : "Vanilla";
+
     internal static string AiTaskForceStagingModeText(bool enabled)
         => enabled ? "Staging" : "Vanilla";
 
@@ -705,6 +723,7 @@ internal static class ModSettings
            $"Smart AI Designs={SmartAiDesignsModeText(SmartAiDesignsEnabled)}; " +
            $"Shared Designs={CampaignSharedDesignUsageSettings.CurrentModeText()}; " +
            $"Smart Refits={SmartRefitsModeText(SmartRefitsEnabled)}; " +
+           $"Sea Transport Losses={SeaTransportLossesModeText(SeaTransportLossesActiveForcesEnabled)}; " +
            $"AI Task Force Staging={AiTaskForceStagingModeText(AiTaskForceStagingEnabled)}; " +
            $"Campaign Naval Mobility={CampaignNavalMobilityModeText(CampaignNavalMobility)}; " +
            $"Task Force Sustainment={TaskForceSustainmentModeText(TaskForceSustainmentFullEnabled)}; " +

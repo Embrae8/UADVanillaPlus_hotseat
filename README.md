@@ -2,7 +2,7 @@
 
 UAD Vanilla Plus (`UAD:VP`) is a lightweight mod for Ultimate Admiral: Dreadnoughts that keeps the base game feel while adding small quality-of-life improvements.
 
-Current version: `0.6.32`
+Current version: `0.6.33`
 
 ## Philosophy
 
@@ -50,7 +50,7 @@ Start the game normally after copying the DLL. If the mod loads, `UAD:VP` and th
 **Balance:**
 
 - **Port Strike balance**: scales transport losses from undefended port strikes by attacker tonnage instead of allowing small raiders to destroy large transport groups.
-- **Transport loss active-force filter**: sea-zone transport losses ignore task forces that are only moving through a region instead of counting them as settled local raiders.
+- **Sea transport loss scope**: default-on `Active Forces` mode makes sea-zone transport losses ignore task forces that are only moving through a region instead of counting them as settled local raiders; `Vanilla` restores the game's original area-vessel list.
 - **AI Fleet Mix**: optional `Vanilla`, `Balanced`, and `Heavy` modes adjust AI surface-ship construction weights and, outside vanilla mode, favor the most under-target valid surface types. This defaults to `Heavy`.
 - **Advanced AI Builder**: default-on `Enhanced` mode lets VP help AI design books with shared-design blueprint adaptation, missing-type recovery, and stale-design refreshes; `Vanilla` keeps the game's original design-generation cadence and exact shared-design checks.
 - **Smart AI Designs**: experimental, default-off mode replaces vanilla's random AI new-design fallback with one deterministic VP attempt after shared and predefined designs fail.
